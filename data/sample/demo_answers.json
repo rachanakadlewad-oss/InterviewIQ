@@ -1,0 +1,14 @@
+{
+  "python": "I maintain a FastAPI service with about 40 endpoints. I structured it into routers and services, wrote pytest tests with 90 percent coverage, and used type hints so new teammates could navigate it quickly.",
+  "api_design": "I designed a versioned REST API that three other teams consumed. I used OpenAPI contracts, cursor pagination and consistent error responses, and I kept v1 working for six months while teams migrated.",
+  "databases": "I fixed a slow PostgreSQL query by reading the query plan, adding a composite index and rewriting a join, which cut latency by 60 percent. I also mentored two juniors through that investigation so they could do it themselves next time.",
+  "system_design": "I designed a Kafka based pipeline handling 3000 requests per second. I chose queues over direct calls to absorb spikes and added a Redis cache; the trade-off was eventual consistency, which we documented for the clients.",
+  "testing": "Tests caught a race condition in payments. I wrote an integration test reproducing it, fixed the lock ordering, and added it to CI with GitHub Actions so it cannot regress.",
+  "cloud_devops": "We deployed through GitHub Actions to AWS using Docker. I added health checks and automatic rollback, which reduced failed releases by half.",
+  "problem_solving": "I profiled a slow endpoint, found an N+1 query as the root cause, fixed it with eager loading and added a regression test. Latency dropped from 900 ms to 120 ms.",
+  "communication": "I explained a database migration risk to our product manager using a simple timeline and a rollback plan, wrote a one page decision document, and the stakeholders approved the downtime window.",
+  "leadership": "I helped them grow by pairing twice a week, giving small scoped tickets, and reviewing their pull requests with explanations. One of them now owns a service and I coached her through her first on-call.",
+  "security": "I added OAuth2 with JWT, validated and sanitised every input, stored secrets in a vault and ran OWASP dependency checks in CI; a pen test later found no critical issues.",
+  "_followup": "Specifically, I wrote the migration script myself, tested it against a copy of production data, measured the result at 40 percent faster, and presented the outcome to the team.",
+  "_generic": "I took ownership of the task, planned it with the team, implemented the solution myself, and measured the result at 30 percent improvement."
+}

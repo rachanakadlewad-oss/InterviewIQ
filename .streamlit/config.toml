@@ -1,0 +1,19 @@
+# Base dark theme (guarantees dark native widgets even before our CSS loads). Fine-tuning lives in frontend/iqui/theme.py
+[theme]
+base = "dark"
+primaryColor = "#1677FF"
+backgroundColor = "#080B12"
+secondaryBackgroundColor = "#111827"
+textColor = "#F5F7FB"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false

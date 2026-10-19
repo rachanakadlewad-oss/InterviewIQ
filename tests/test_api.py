@@ -1,0 +1,168 @@
+"""HTTP-level tests. Require fastapi + httpx (see requirements.txt); skipped automatically if missing."""
+import pytest
+
+pytest.importorskip("fastapi")
+pytest.importorskip("httpx")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.api.main import create_app  # noqa: E402
+from tests.helpers import ANSWER_BANK, SAMPLE  # noqa: E402
+
+
+@pytest.fixture
+def client(settings):
+    return TestClient(create_app(settings))
+
+
+def upload(client, job_id, name):
+    f = SAMPLE / "resumes" / name
+    return client.post(f"/jobs/{job_id}/applications", files={"file": (name, f.read_bytes())})
+
+
+def test_health_and_config_label_demo_mode(client):
+    assert client.get("/health").json() == {"status": "ok"}
+    c = client.get("/config").json()
+    assert c["demo_llm"] is True and c["identity_is_demo"] is True
+
+
+def test_bad_uploads_are_rejected_cleanly(client):
+    job = client.post("/jobs/load-sample").json()
+    r = client.post(f"/jobs/{job['id']}/applications", files={"file": ("x.exe", b"MZ")})
+    assert r.status_code == 422
+    assert client.post("/jobs/999/applications", files={"file": ("x.txt", b"hello world" * 10)}).status_code == 404
+
+
+def test_invalid_job_payload_is_422(client):
+    assert client.post("/jobs", json={"title": "x", "competencies": []}).status_code == 422
+
+
+def test_recruiter_api_key_enforced(settings):
+    settings.recruiter_api_key = "secret"
+    c = TestClient(create_app(settings))
+    assert c.get("/jobs").status_code == 401
+    assert c.get("/jobs", headers={"X-API-Key": "secret"}).status_code == 200
+
+
+def test_candidate_token_required(client):
+    assert client.get("/portal/me").status_code == 401
+    assert client.get("/portal/me", headers={"X-Access-Token": "nope"}).status_code == 401
+
+
+def test_full_flow_over_http_with_gate(client):
+    job = client.post("/jobs/load-sample").json()
+    ids = [upload(client, job["id"], n).json()["application_id"] for n in ("Aarav_Mehta.docx", "Karan_Shah.docx")]
+    ranking = client.post(f"/jobs/{job['id']}/screen").json()
+    assert ranking["ranking"][0]["name"] == "Aarav Mehta"
+    top = ranking["ranking"][0]["application_id"]
+    assert client.post(f"/jobs/{job['id']}/shortlist", json={"application_ids": [top]}).status_code == 200
+    sched = client.post(f"/jobs/{job['id']}/schedule").json()
+    assert sched[0]["scheduled"], "sample calendar slots must be in the future - re-run data/generate_demo_data.py"
+    H = {"X-Access-Token": sched[0]["access_token"]}
+    # gate: interview refused before identity verification
+    assert client.post("/portal/interview/start", headers=H).status_code == 409
+    # failed identity -> human review, still blocked
+    r = client.post("/portal/identity-check", headers=H, data={"scenario": "different_person"}).json()
+    assert r["passed"] is False
+    assert client.post("/portal/interview/start", headers=H).status_code == 409
+    review = client.get("/reviews").json()[0]
+    client.post(f"/reviews/{review['id']}/resolve", json={"resolution": "approve_retry"})
+    assert client.post("/portal/identity-check", headers=H, data={"scenario": "match"}).json()["passed"] is True
+    q = client.post("/portal/interview/start", headers=H).json()
+    assert q["question"]
+    out = q
+    for _ in range(20):
+        cid = out["competency_id"]
+        out = client.post("/portal/interview/answer", headers=H, json={"answer": ANSWER_BANK.get(cid, ANSWER_BANK["_generic"])}).json()
+        if out["concluded"]:
+            break
+    assert out["concluded"]
+    rep = client.get(f"/applications/{top}/report").json()
+    assert rep["assessment"]["final_score"] is not None and rep["status"] == "ASSESSED"
+    fb = client.get("/portal/feedback", headers=H).json()
+    assert fb["available"] and "label" not in fb and "final_score" not in fb
+    assert client.post(f"/applications/{top}/decision", json={"decision": "ADVANCE", "notes": "ok"}).status_code == 200
+    assert client.post("/portal/interview/answer", headers=H, json={"answer": "late"}).status_code == 409
+
+
+def _prepare(client, files=("Aarav_Mehta.docx", "Priya_Nair.pdf", "Karan_Shah.docx")):
+    job = client.post("/jobs/load-sample").json()
+    for n in files:
+        assert upload(client, job["id"], n).status_code == 200
+    return job
+
+
+def test_overview_reflects_real_state_and_next_action(client):
+    assert client.get("/overview").json()["next_action"]["page"] == "Jobs"          # nothing exists yet
+    job = _prepare(client)
+    o = client.get("/overview").json()
+    assert o["metrics"]["total_applicants"] == 3 and o["metrics"]["awaiting_screening"] == 3
+    assert o["next_action"]["key"] == "screen" and o["metrics"]["free_slots"] > 0
+    client.post(f"/jobs/{job['id']}/screen")
+    o = client.get("/overview").json()
+    assert o["metrics"]["awaiting_review"] == 3 and o["next_action"]["key"] == "shortlist"
+    assert o["per_job"][0]["scored"] == 3 and o["funnel"][1]["count"] == 3
+
+
+def test_multiple_resume_uploads_are_all_processed_and_listed(client):
+    job = _prepare(client, ("Aarav_Mehta.docx", "Priya_Nair.pdf", "Rohan_Gupta.docx", "Sneha_Kulkarni.pdf"))
+    res = client.post(f"/jobs/{job['id']}/screen").json()
+    assert len(res["scored"]) == 4 and not res["failed"]
+    apps = client.get(f"/jobs/{job['id']}/applications").json()
+    assert len(apps) == 4 and all(a["resume_score"] is not None and a["scoring_source"] == "demo_rules" for a in apps)
+    allapps = client.get("/applications").json()
+    assert len(allapps) == 4 and allapps[0]["job_title"] == "Backend Python Engineer"
+
+
+def test_slots_and_reviews_are_enriched_for_the_ui(client):
+    job = _prepare(client)
+    client.post(f"/jobs/{job['id']}/screen")
+    top = client.get(f"/jobs/{job['id']}/applications").json()[0]["application_id"]
+    client.post(f"/jobs/{job['id']}/shortlist", json={"application_ids": [top]})
+    sched = client.post(f"/jobs/{job['id']}/schedule").json()
+    booked = [s for s in client.get("/slots").json() if s["application_id"]]
+    assert len(booked) == 1 and booked[0]["candidate"] and booked[0]["job_title"] and booked[0]["confirmation_file"] is True
+    H = {"X-Access-Token": sched[0]["access_token"]}
+    me = client.get("/portal/me", headers=H).json()
+    assert me["job_title"] == "Backend Python Engineer" and me["max_questions"] == 8
+    client.post("/portal/identity-check", headers=H, data={"scenario": "no_face"})
+    r = client.get("/reviews").json()
+    assert r[0]["candidate"] and r[0]["job_title"] and r[0]["status"] == "OPEN"
+    client.post(f"/reviews/{r[0]['id']}/resolve", json={"resolution": "reject", "notes": "unverifiable"})
+    assert client.get("/reviews").json() == [] and client.get("/reviews?status=RESOLVED").json()[0]["resolution"] == "reject"
+    assert len(client.get("/reviews?status=ALL").json()) == 1
+
+
+def test_report_has_transcript_and_candidate_feedback_has_no_private_fields(client):
+    job = _prepare(client, ("Aarav_Mehta.docx",))
+    client.post(f"/jobs/{job['id']}/screen")
+    app_id = client.get(f"/jobs/{job['id']}/applications").json()[0]["application_id"]
+    client.post(f"/jobs/{job['id']}/shortlist", json={"application_ids": [app_id]})
+    H = {"X-Access-Token": client.post(f"/jobs/{job['id']}/schedule").json()[0]["access_token"]}
+    client.post("/portal/identity-check", headers=H, data={"scenario": "match"})
+    out = client.post("/portal/interview/start", headers=H).json()
+    for _ in range(20):
+        out = client.post("/portal/interview/answer", headers=H, json={"answer": ANSWER_BANK.get(out["competency_id"], ANSWER_BANK["_generic"])}).json()
+        if out["concluded"]:
+            break
+    rep = client.get(f"/applications/{app_id}/report").json()
+    assert rep["transcript"][0]["role"] == "interviewer" and any(t["role"] == "candidate" for t in rep["transcript"])
+    fb = client.get("/portal/feedback", headers=H).json()
+    blob = str(fb).lower()
+    for private in ("final_score", "resume_score", "recommend", "label", "rank", "@example.com"):
+        assert private not in blob
+    assert fb["competencies"] and all(set(c) == {"name", "level", "evidence"} for c in fb["competencies"])
+
+
+def test_candidate_cannot_reach_recruiter_routes_with_api_key_enabled(settings):
+    settings.recruiter_api_key = "k"
+    c = TestClient(create_app(settings))
+    c.post("/jobs/load-sample", headers={"X-API-Key": "k"})
+    for path in ("/overview", "/applications", "/slots", "/reviews", "/jobs"):
+        assert c.get(path).status_code == 401                              # no key -> refused, token or not
+    assert c.get("/overview", headers={"X-Access-Token": "anything"}).status_code == 401
+
+
+def test_calendar_generation_is_idempotent_and_keeps_bookings(client):
+    assert client.post("/calendar/generate").json()["slots_added"] == 40
+    assert client.post("/calendar/generate").json()["slots_added"] == 0
+    assert len(client.get("/slots").json()) == 40

@@ -1,0 +1,252 @@
+{
+  "title": "Backend Python Engineer",
+  "description": "Build and operate Python/FastAPI services for a SaaS product. 2-6 years of experience, strong fundamentals in APIs, databases, testing and cloud deployment.",
+  "competencies": [
+    {
+      "id": "python",
+      "name": "Python Programming",
+      "description": "Writes clean, idiomatic, maintainable Python.",
+      "weight": 1.5,
+      "keywords": [
+        "python",
+        "pandas",
+        "asyncio",
+        "fastapi",
+        "flask",
+        "django",
+        "pytest"
+      ],
+      "questions": [
+        "Tell me about a Python codebase you are proud of. What made it maintainable?"
+      ],
+      "rubric": {
+        "1": "Only basic scripts; no evidence of structure.",
+        "3": "Builds working services/modules in Python with some structure.",
+        "5": "Designs well-structured, tested, idiomatic Python systems and explains trade-offs."
+      }
+    },
+    {
+      "id": "api_design",
+      "name": "REST API Design",
+      "description": "Designs consistent, versioned, well-documented APIs.",
+      "weight": 1.2,
+      "keywords": [
+        "rest",
+        "api",
+        "endpoint",
+        "openapi",
+        "swagger",
+        "graphql",
+        "pagination",
+        "versioning"
+      ],
+      "questions": [
+        "Walk me through how you designed an API that other teams relied on."
+      ],
+      "rubric": {
+        "1": "Has consumed APIs only.",
+        "3": "Has built CRUD APIs with basic validation.",
+        "5": "Designs versioned APIs with contracts, error handling, pagination and backward compatibility."
+      }
+    },
+    {
+      "id": "databases",
+      "name": "Databases and SQL",
+      "description": "Models data, writes efficient queries, understands indexing and transactions.",
+      "weight": 1.2,
+      "keywords": [
+        "sql",
+        "postgresql",
+        "mysql",
+        "index",
+        "query",
+        "schema",
+        "transaction",
+        "redis",
+        "mongodb",
+        "orm"
+      ],
+      "questions": [
+        "Describe a time you had to fix a slow database query or redesign a schema."
+      ],
+      "rubric": {
+        "1": "Basic CRUD queries only.",
+        "3": "Designs schemas and writes joins/indexes for real workloads.",
+        "5": "Diagnoses performance with query plans, designs for scale and consistency, explains trade-offs."
+      }
+    },
+    {
+      "id": "system_design",
+      "name": "System Design",
+      "description": "Designs scalable, reliable systems and reasons about trade-offs.",
+      "weight": 1.2,
+      "keywords": [
+        "architecture",
+        "microservices",
+        "scalab",
+        "queue",
+        "kafka",
+        "rabbitmq",
+        "cache",
+        "load balanc",
+        "distributed",
+        "design"
+      ],
+      "questions": [
+        "Tell me about a system you designed or significantly re-architected. What trade-offs did you make?"
+      ],
+      "rubric": {
+        "1": "Works inside existing designs.",
+        "3": "Contributes to designs of services with some scale considerations.",
+        "5": "Leads designs, quantifies load, explains failure modes and trade-offs."
+      }
+    },
+    {
+      "id": "testing",
+      "name": "Testing and Quality",
+      "description": "Writes automated tests and builds quality into the process.",
+      "weight": 1.0,
+      "keywords": [
+        "test",
+        "pytest",
+        "unit test",
+        "integration test",
+        "ci",
+        "coverage",
+        "tdd",
+        "mock"
+      ],
+      "questions": [
+        "How do you decide what to test, and can you give an example where tests caught a serious bug?"
+      ],
+      "rubric": {
+        "1": "Tests manually.",
+        "3": "Writes unit tests for own code.",
+        "5": "Builds layered test strategy, automates in CI, uses tests to enable safe refactoring."
+      }
+    },
+    {
+      "id": "cloud_devops",
+      "name": "Cloud and DevOps",
+      "description": "Deploys and operates services on cloud infrastructure.",
+      "weight": 1.0,
+      "keywords": [
+        "aws",
+        "azure",
+        "gcp",
+        "docker",
+        "kubernetes",
+        "terraform",
+        "ci/cd",
+        "deploy",
+        "github actions",
+        "jenkins",
+        "monitoring"
+      ],
+      "questions": [
+        "Describe how your last service went from a pull request to production."
+      ],
+      "rubric": {
+        "1": "Has not deployed services.",
+        "3": "Containerises and deploys with a pipeline.",
+        "5": "Owns infra-as-code, observability and safe rollouts."
+      }
+    },
+    {
+      "id": "problem_solving",
+      "name": "Problem Solving",
+      "description": "Breaks down ambiguous problems and debugs systematically.",
+      "weight": 1.2,
+      "keywords": [
+        "debug",
+        "root cause",
+        "optimi",
+        "profil",
+        "algorithm",
+        "reduced",
+        "improved",
+        "bottleneck",
+        "investigat"
+      ],
+      "questions": [
+        "Tell me about the hardest bug or performance problem you solved. How did you approach it?"
+      ],
+      "rubric": {
+        "1": "Relies on trial and error.",
+        "3": "Debugs methodically and fixes root causes in familiar areas.",
+        "5": "Forms hypotheses, measures, finds root causes in unfamiliar systems and prevents recurrence."
+      }
+    },
+    {
+      "id": "communication",
+      "name": "Communication and Collaboration",
+      "description": "Explains technical ideas clearly and works well with others.",
+      "weight": 0.8,
+      "keywords": [
+        "stakeholder",
+        "documentation",
+        "presented",
+        "collaborat",
+        "cross-functional",
+        "code review",
+        "wrote"
+      ],
+      "questions": [
+        "Tell me about a time you had to explain a technical decision to a non-technical stakeholder."
+      ],
+      "rubric": {
+        "1": "Limited evidence of collaboration.",
+        "3": "Communicates clearly within the team.",
+        "5": "Adapts to audiences, documents decisions, builds alignment across teams."
+      }
+    },
+    {
+      "id": "leadership",
+      "name": "Leadership and Mentoring",
+      "description": "Mentors others and drives technical direction.",
+      "weight": 0.6,
+      "keywords": [
+        "mentor",
+        "led a team",
+        "team lead",
+        "coached",
+        "onboard",
+        "managed",
+        "ownership"
+      ],
+      "questions": [
+        "Tell me about a time you helped another engineer grow or led a piece of work."
+      ],
+      "rubric": {
+        "1": "No leadership evidence.",
+        "3": "Has mentored or led small pieces of work.",
+        "5": "Grows others, sets direction, takes accountability for team outcomes."
+      }
+    },
+    {
+      "id": "security",
+      "name": "Security Awareness",
+      "description": "Applies secure-coding and data-protection practices.",
+      "weight": 0.8,
+      "keywords": [
+        "security",
+        "oauth",
+        "jwt",
+        "authentication",
+        "authorization",
+        "encrypt",
+        "owasp",
+        "vulnerab",
+        "sanitiz"
+      ],
+      "questions": [
+        "How do you approach security when building a new feature that handles user data?"
+      ],
+      "rubric": {
+        "1": "Unaware of common risks.",
+        "3": "Applies authentication and input validation.",
+        "5": "Threat-models features, applies defence in depth, handles secrets and audits dependencies."
+      }
+    }
+  ]
+}
