@@ -73,11 +73,10 @@ def shortlist_section(job_id: int, job_title: str, apps: list, cfg: dict):
         is_locked = a["status"] not in ("SCORED", "SHORTLISTED")
         is_selected = aid in selected_ids
 
-        c_info, c_btn = st.columns([4.2, 1.3])
+        c_info, c_btn = st.columns([4.4, 1.2])
         with c_info:
             C._emit(C.candidate_card_html(a, job_title, is_selected=is_selected, is_locked=is_locked))
         with c_btn:
-            st.write("")
             if is_locked:
                 st.caption("🔒 Scheduled")
             elif is_selected:
@@ -134,42 +133,42 @@ def shortlist_section(job_id: int, job_title: str, apps: list, cfg: dict):
 
 
 def schedule_section(job_id, apps, job_title="Position"):
-    C.section("2. Schedule interviews", "Each confirmed shortlisted candidate gets the earliest free slot. The backend refuses double bookings.")
-    # Only confirmed shortlisted candidates move to interview scheduling
-    pending = [a for a in apps if a["status"] == "SHORTLISTED"]
-    if pending:
-        C.callout("info", f"{len(pending)} confirmed candidate(s) need an interview slot",
-                  ", ".join(a["name"] or f"#{a['application_id']}" for a in pending))
-    else:
-        st.caption("No pending shortlisted candidates need scheduling right now.")
+    C.section("2. Schedule Interviews", "Each confirmed shortlisted candidate gets the earliest free slot. The backend refuses double bookings.")
+    with st.container(border=True):
+        pending = [a for a in apps if a["status"] == "SHORTLISTED"]
+        if pending:
+            C.callout("info", f"{len(pending)} confirmed candidate(s) need an interview slot",
+                      ", ".join(a["name"] or f"#{a['application_id']}" for a in pending))
+        else:
+            st.caption("No pending shortlisted candidates need scheduling right now.")
 
-    if st.button("Schedule shortlisted candidates", type="primary", disabled=not pending, key=f"btn_sched_{job_id}"):
-        with st.spinner("Assigning earliest available slots..."):
-            res = api.call("POST", f"/jobs/{job_id}/schedule")
+        if st.button("Schedule shortlisted candidates", type="primary", disabled=not pending, key=f"btn_sched_{job_id}", use_container_width=True):
+            with st.spinner("Assigning earliest available slots..."):
+                res = api.call("POST", f"/jobs/{job_id}/schedule")
 
-        booked_msgs = []
-        failed_msgs = []
-        for r in res or []:
-            cand_name = r.get("candidate") or f"Application #{r['application_id']}"
-            if r.get("scheduled"):
-                if not r.get("already_scheduled"):
-                    booked_msgs.append(f"{cand_name} on {H.fmt_dt(r['start'])} ({r['resource']})")
-            else:
-                failed_msgs.append(f"{cand_name}: {r.get('reason', 'no free slot available')}")
+            booked_msgs = []
+            failed_msgs = []
+            for r in res or []:
+                cand_name = r.get("candidate") or f"Application #{r['application_id']}"
+                if r.get("scheduled"):
+                    if not r.get("already_scheduled"):
+                        booked_msgs.append(f"{cand_name} on {H.fmt_dt(r['start'])} ({r['resource']})")
+                else:
+                    failed_msgs.append(f"{cand_name}: {r.get('reason', 'no free slot available')}")
 
-        if booked_msgs:
-            api.flash("success", "Interviews Booked",
-                      f"Successfully scheduled {len(booked_msgs)} candidate(s): " + ", ".join(booked_msgs))
-        if failed_msgs:
-            api.flash("warning", "Insufficient Availability",
-                      f"Could not schedule {len(failed_msgs)} candidate(s): " + "; ".join(failed_msgs) +
-                      ". Generate more slots in the calendar below, then click Schedule again.")
+            if booked_msgs:
+                api.flash("success", "Interviews Booked",
+                          f"Successfully scheduled {len(booked_msgs)} candidate(s): " + ", ".join(booked_msgs))
+            if failed_msgs:
+                api.flash("warning", "Insufficient Availability",
+                          f"Could not schedule {len(failed_msgs)} candidate(s): " + "; ".join(failed_msgs) +
+                          ". Generate more slots in the calendar below, then click Schedule again.")
 
-        # Update availability immediately and remove scheduled candidates from pending list
-        st.rerun()
+            st.rerun()
 
-    C.callout("info", "About confirmations", "A confirmation JSON and e-mail text are saved on this computer for each booking. "
-              "No e-mail is sent - give each candidate their access token yourself.")
+        C.callout("info", "About booking confirmations", "A confirmation JSON and e-mail text are saved locally for each booking. "
+                  "Give each candidate their access token from the table below to allow them to access their interview portal.")
+
 
 
 def calendar_section(job_id):
@@ -193,65 +192,68 @@ def calendar_section(job_id):
         return
 
     # 1. Scheduled Interviews Table for this Job
-    if booked_for_job:
+    with st.container(border=True):
         st.markdown("#### Scheduled Interviews (This Job)")
-        C.table([("when", "When", "strong"), ("who", "Candidate"), ("room", "Resource"), ("status", "Status"), ("conf", "Confirmation file")],
-                [{"when": H.fmt_dt(s["start"]), "who": s["candidate"] or "-", "room": s["resource"], "status": C.status_badge(s["application_status"]),
-                  "conf": C.badge("Saved locally", "success", dot=False) if s["confirmation_file"] else C.badge("Missing", "warning", dot=False)}
-                 for s in booked_for_job])
-        with st.expander("Candidate access tokens (share privately with each candidate)"):
-            show = st.checkbox("Reveal tokens")
-            for s in booked_for_job:
-                a = apps.get(s["application_id"])
-                if a:
-                    st.markdown(f"**{a['name'] or '#' + str(a['application_id'])}** - `{a['access_token'] if show else '************'}`")
-    else:
-        C.empty_state("No interviews scheduled for this job", "Shortlist candidates in Step 1 and schedule them in Step 2 above.")
+        if booked_for_job:
+            C.table([("when", "When", "strong"), ("who", "Candidate"), ("room", "Resource"), ("status", "Status"), ("conf", "Confirmation file")],
+                    [{"when": H.fmt_dt(s["start"]), "who": s["candidate"] or "-", "room": s["resource"], "status": C.status_badge(s["application_status"]),
+                      "conf": C.badge("Saved locally", "success", dot=False) if s["confirmation_file"] else C.badge("Missing", "warning", dot=False)}
+                     for s in booked_for_job])
+            with st.expander("Candidate access tokens (share privately with each candidate)"):
+                show = st.checkbox("Reveal tokens")
+                for s in booked_for_job:
+                    a = apps.get(s["application_id"])
+                    if a:
+                        st.markdown(f"**{a['name'] or '#' + str(a['application_id'])}** - `{a['access_token'] if show else '************'}`")
+        else:
+            C.empty_state("No interviews scheduled for this job", "Shortlist candidates in Step 1 and schedule them in Step 2 above.", icon="📅")
 
-    # 2. Calendar Availability Metrics
-    now_iso = datetime.now().isoformat()
-    upcoming_slots = [s for s in slots if s["start"] >= now_iso]
-    free_upcoming = [s for s in upcoming_slots if s["application_id"] is None]
-    booked_upcoming = [s for s in upcoming_slots if s["application_id"] is not None]
+    # 2. Calendar Availability Metrics & Daily Schedule
+    with st.container(border=True):
+        now_iso = datetime.now().isoformat()
+        upcoming_slots = [s for s in slots if s["start"] >= now_iso]
+        free_upcoming = [s for s in upcoming_slots if s["application_id"] is None]
+        booked_upcoming = [s for s in upcoming_slots if s["application_id"] is not None]
 
-    st.markdown("#### Calendar Capacity & Daily Schedule")
-    m_col1, m_col2, m_col3 = st.columns(3)
-    with m_col1:
-        st.markdown(
-            f'<div class="iq-sl-pill"><i></i><span>Upcoming Free Slots: <b>{len(free_upcoming)}</b></span></div>',
-            unsafe_allow_html=True
-        )
-    with m_col2:
-        st.markdown(
-            f'<div class="iq-sl-pill"><span style="color:var(--primary)">●</span>&nbsp;<span>Booked Interviews: <b>{len(booked_upcoming)}</b></span></div>',
-            unsafe_allow_html=True
-        )
-    with m_col3:
-        st.markdown(
-            f'<div class="iq-sl-pill"><span style="color:var(--muted)">■</span>&nbsp;<span>Total Upcoming Slots: <b>{len(upcoming_slots)}</b></span></div>',
-            unsafe_allow_html=True
-        )
+        st.markdown("#### Calendar Capacity & Daily Schedule")
+        m_col1, m_col2, m_col3 = st.columns(3)
+        with m_col1:
+            st.markdown(
+                f'<div class="iq-sl-pill"><i></i><span>Upcoming Free Slots: <b>{len(free_upcoming)}</b></span></div>',
+                unsafe_allow_html=True
+            )
+        with m_col2:
+            st.markdown(
+                f'<div class="iq-sl-pill"><span style="color:var(--primary)">●</span>&nbsp;<span>Booked Interviews: <b>{len(booked_upcoming)}</b></span></div>',
+                unsafe_allow_html=True
+            )
+        with m_col3:
+            st.markdown(
+                f'<div class="iq-sl-pill"><span style="color:var(--muted)">■</span>&nbsp;<span>Total Upcoming Slots: <b>{len(upcoming_slots)}</b></span></div>',
+                unsafe_allow_html=True
+            )
 
-    if not free_upcoming:
-        C.callout("warning", "No upcoming free slots available",
-                  "All upcoming slots are either booked or in the past. Generate more slots below to enable interview bookings.")
+        if not free_upcoming:
+            C.callout("warning", "No upcoming free slots available",
+                      "All upcoming slots are either booked or in the past. Generate more slots below to enable interview bookings.")
 
-    if st.button("Generate slots for the next 5 working days", key="btn_gen_5d"):
-        n = api.call("POST", "/calendar/generate")
-        if n is not None:
-            api.flash("success", "Calendar updated",
-                      f"{n['slots_added']} new slot(s) added." if n["slots_added"] else "Slots already exist for the next 5 working days (no duplicates created).")
-            st.rerun()
+        if st.button("Generate slots for the next 5 working days", key="btn_gen_5d", use_container_width=True):
+            n = api.call("POST", "/calendar/generate")
+            if n is not None:
+                api.flash("success", "Calendar updated",
+                          f"{n['slots_added']} new slot(s) added." if n["slots_added"] else "Slots already exist for the next 5 working days (no duplicates created).")
+                st.rerun()
 
-    # 3. Daily Calendar View
-    days = sorted({s["start"][:10] for s in slots})
-    if days:
-        pick = st.selectbox("View day schedule", days, format_func=lambda d: date.fromisoformat(d).strftime("%A %d %B %Y"), key="cal_pick_day")
-        day_slots = [s for s in slots if s["start"].startswith(pick)]
-        # Sort day slots strictly by start time, then resource
-        day_slots.sort(key=lambda s: (s["start"], s["resource"], s["id"]))
-        C.table([("t", "Time", "strong"), ("room", "Resource"), ("state", "State"), ("job", "Job Position")],
-                [{"t": f"{H.fmt_dt(s['start'], False)} - {H.fmt_dt(s['end'], False)}", "room": s["resource"],
-                  "state": C.badge(f"Booked: {s['candidate']}", "info", dot=False) if s["application_id"] else C.badge("Free", "success", dot=False),
-                  "job": s.get("job_title") or ("-" if not s["application_id"] else "Other Job")}
-                 for s in day_slots])
+        # 3. Daily Calendar View
+        days = sorted({s["start"][:10] for s in slots})
+        if days:
+            st.markdown("##### Day Schedule Breakdown")
+            pick = st.selectbox("View day schedule", days, format_func=lambda d: date.fromisoformat(d).strftime("%A %d %B %Y"), key="cal_pick_day")
+            day_slots = [s for s in slots if s["start"].startswith(pick)]
+            day_slots.sort(key=lambda s: (s["start"], s["resource"], s["id"]))
+            C.table([("t", "Time", "strong"), ("room", "Resource"), ("state", "State"), ("job", "Job Position")],
+                    [{"t": f"{H.fmt_dt(s['start'], False)} - {H.fmt_dt(s['end'], False)}", "room": s["resource"],
+                      "state": C.badge(f"Booked: {s['candidate']}", "info", dot=False) if s["application_id"] else C.badge("Free", "success", dot=False),
+                      "job": s.get("job_title") or ("-" if not s["application_id"] else "Other Job")}
+                     for s in day_slots])
+

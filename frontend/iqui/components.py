@@ -69,8 +69,9 @@ def table_html(columns: List[tuple], rows: List[dict], empty: str = "Nothing to 
     return f'<div class="iq-tablewrap"><table class="iq-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
-def empty_html(title: str, body: str = "") -> str:
-    return f'<div class="iq-empty"><div class="t">{esc(title)}</div><div class="b">{esc(body)}</div></div>'
+def empty_html(title: str, body: str = "", icon: str = "📂") -> str:
+    return f'<div class="iq-empty"><div class="icon">{esc(icon)}</div><div class="t">{esc(title)}</div>{f"<div class=b>{esc(body)}</div>" if body else ""}</div>'
+
 
 
 def callout_html(tone: str, title: str, body: str = "") -> str:
@@ -164,8 +165,9 @@ def callout(tone: str, title: str, body: str = ""):
     _emit(callout_html(tone, title, body))
 
 
-def empty_state(title: str, body: str = ""):
-    _emit(empty_html(title, body))
+def empty_state(title: str, body: str = "", icon: str = "📂"):
+    _emit(empty_html(title, body, icon))
+
 
 
 def metric_grid(items):
@@ -292,7 +294,7 @@ def candidate_card_html(cand: dict, job_title: str, is_selected: bool, is_locked
 
     return (f'<div class="{" ".join(classes)}">'
             f'<div class="iq-cand-top">'
-            f'<div style="flex:1">'
+            f'<div style="flex:1;min-width:0">'
             f'<div class="iq-cand-meta">'
             f'<span class="iq-rank-badge">{rank_str}</span>'
             f'<span class="iq-cand-name">{name}</span>'
@@ -306,3 +308,4 @@ def candidate_card_html(cand: dict, job_title: str, is_selected: bool, is_locked
             f'</div>'
             f'</div>'
             f'</div>')
+

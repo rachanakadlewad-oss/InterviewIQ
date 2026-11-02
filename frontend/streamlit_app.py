@@ -18,6 +18,16 @@ RECRUITER_PAGES = {
     "Settings & Demo Info": settings.render,
 }
 
+RECRUITER_LABELS = {
+    "Overview": "📊  Overview",
+    "Jobs": "💼  Job Openings",
+    "Candidates": "👥  Candidates & Screening",
+    "Shortlist & Scheduling": "📅  Shortlist & Scheduling",
+    "Identity Review": "🛡️  Identity Review",
+    "Reports & Decisions": "📑  Reports & Decisions",
+    "Settings & Demo Info": "⚙️  Settings & Info",
+}
+
 C.inject_theme()
 cfg = api.config()
 
@@ -25,8 +35,15 @@ with st.sidebar:
     C.brand()
     role = st.radio("Workspace", ["Recruiter", "Candidate"], horizontal=True, label_visibility="collapsed", key="role")
     if role == "Recruiter":
-        C.side_label("Recruiter")
-        page = st.radio("Navigation", list(RECRUITER_PAGES), label_visibility="collapsed", key="nav_recruiter")
+        C.side_label("Recruiter Workspace")
+        page = st.radio(
+            "Navigation",
+            list(RECRUITER_PAGES),
+            label_visibility="collapsed",
+            key="nav_recruiter",
+            format_func=lambda k: RECRUITER_LABELS.get(k, k)
+        )
+
     else:
         C.side_label("My interview")
         page = st.radio("Navigation", candidate.PAGES, label_visibility="collapsed", key="nav_candidate")

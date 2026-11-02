@@ -35,30 +35,32 @@ def render():
 def jobs_view():
     ov = api.call("GET", "/overview") or {"per_job": []}
     if not ov["per_job"]:
-        C.empty_state("No jobs yet", "Use the 'Create a job' tab, or load the sample job from the Overview page.")
+        C.empty_state("No jobs yet", "Use the 'Create a job' tab, or load the sample job from the Overview page.", icon="💼")
         return
     selected = api.job_picker("Selected job")
-    C.table([("job_id", "ID"), ("title", "Job", "strong"), ("applicants", "Applicants", "r"), ("scored", "Scored", "r"),
+    C.table([("job_id", "ID"), ("title", "Job Title", "strong"), ("applicants", "Applicants", "r"), ("scored", "Scored", "r"),
              ("shortlisted", "Shortlisted", "r")], ov["per_job"])
     if not selected:
         return
     job = api.call("GET", f"/jobs/{selected}")
     if not job:
         return
-    C.section(job["title"], "Competencies and scoring weights")
-    if job["description"]:
-        C.quote(job["description"])
-    tw = sum(c["weight"] for c in job["competencies"]) or 1
-    C.table([("name", "Competency", "strong"), ("weight", "Weight"), ("share", "Share of resume score"), ("keywords", "Demo keywords")],
-            [{"name": c["name"], "weight": c["weight"], "share": C.score_bar(c["weight"] / tw * 100, 100),
-              "keywords": ", ".join(c.get("keywords", [])[:5]) or "-"} for c in job["competencies"]])
-    for c in job["competencies"]:
-        if c.get("rubric") or c.get("questions"):
-            with st.expander(f"Rubric and opening question - {c['name']}"):
-                for lvl, txt in sorted(c.get("rubric", {}).items()):
-                    st.markdown(f"**Level {lvl}:** {txt}")
-                for q in c.get("questions", []):
-                    st.markdown(f"*Opening question:* {q}")
+    with st.container(border=True):
+        C.section(job["title"], "Configured role competencies and evaluation weights")
+        if job["description"]:
+            C.quote(job["description"])
+        tw = sum(c["weight"] for c in job["competencies"]) or 1
+        C.table([("name", "Competency", "strong"), ("weight", "Weight"), ("share", "Share of Resume Score"), ("keywords", "Demo Keywords")],
+                [{"name": c["name"], "weight": c["weight"], "share": C.score_bar(c["weight"] / tw * 100, 100),
+                  "keywords": ", ".join(c.get("keywords", [])[:5]) or "-"} for c in job["competencies"]])
+        for c in job["competencies"]:
+            if c.get("rubric") or c.get("questions"):
+                with st.expander(f"Rubric & Opening Question - {c['name']}"):
+                    for lvl, txt in sorted(c.get("rubric", {}).items()):
+                        st.markdown(f"**Level {lvl}:** {txt}")
+                    for q in c.get("questions", []):
+                        st.markdown(f"*Opening question:* {q}")
+
 
 
 def create_view():
