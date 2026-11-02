@@ -10,39 +10,137 @@ def render():
     job_id = api.job_picker()
     if not job_id:
         return
+    job = api.call("GET", f"/jobs/{job_id}") or {}
+    job_title = job.get("title", f"Job #{job_id}")
     cfg = api.config() or {}
     apps = [a for a in (api.call("GET", f"/jobs/{job_id}/applications") or []) if a["resume_score"] is not None]
     st.session_state.setdefault("sched_msgs", {})
-    shortlist_section(job_id, apps, cfg)
-    schedule_section(job_id, apps)
+    shortlist_section(job_id, job_title, apps, cfg)
+    schedule_section(job_id, apps, job_title)
     calendar_section(job_id)
 
 
-def shortlist_section(job_id, apps, cfg):
-    C.section("1. Shortlist", "The system proposes the top candidates; you decide who is shortlisted.")
+def shortlist_section(job_id: int, job_title: str, apps: list, cfg: dict):
+    C.section("1. Shortlist", "Review scored candidates, customize your selection, and confirm the shortlist to advance them to scheduling.")
     if not apps:
         C.empty_state("No scored candidates", "Score resumes on the Candidates page first.")
         st.button("Go to Candidates", on_click=api.go, args=("Candidates",))
         return
+
+    # 1. Sort strictly in descending order of resume score
+    sorted_apps = H.sort_candidates_by_score(apps)
+    selectable_apps = [a for a in sorted_apps if a["status"] in ("SCORED", "SHORTLISTED")]
+    locked_apps = [a for a in sorted_apps if a["status"] not in ("SCORED", "SHORTLISTED")]
+
+    # 2. Consistent state management across page refreshes
+    sel_key = f"sl_selected_{job_id}"
+    confirmed_in_db = H.get_confirmed_shortlist_ids(selectable_apps)
+    if sel_key not in st.session_state:
+        # Initialise directly from confirmed database records (never auto-shortlist unconfirmed candidates)
+        st.session_state[sel_key] = list(confirmed_in_db)
+
+    selected_ids = list(dict.fromkeys(st.session_state[sel_key]))
     top_n = (cfg.get("shortlist") or {}).get("top_n", 3)
-    current = [a["application_id"] for a in apps if a["shortlisted"]]
-    default = current or [a["application_id"] for a in apps[:top_n]]
-    name = lambda i: next(f"{a['name'] or 'Application'} - score {a['resume_score']:.1f} (rank {a['rank']})" for a in apps if a["application_id"] == i)
-    chosen = st.multiselect("Shortlisted candidates", [a["application_id"] for a in apps], default=default, format_func=name, key=f"sl_{job_id}")
-    locked = [a for a in apps if a["application_id"] not in chosen and a["status"] not in ("SCORED", "SHORTLISTED")]
-    if locked:
-        st.caption("Candidates already past scheduling cannot be removed from the shortlist.")
-    if st.button("Confirm shortlist", type="primary"):
-        if api.call("POST", f"/jobs/{job_id}/shortlist", json={"application_ids": chosen}):
-            api.flash("success", "Shortlist saved", f"{len(chosen)} candidate(s) shortlisted. Schedule them in step 2.")
+
+    # 3. Toolbar & live counter
+    num_selected = len(selected_ids)
+    num_selectable = len(selectable_apps)
+
+    t_col1, t_col2, t_col3, t_col4 = st.columns([2.5, 1.2, 1.2, 1])
+    with t_col1:
+        st.markdown(
+            f'<div class="iq-sl-pill"><i></i><span>Selected: <b>{num_selected}</b> of {num_selectable} candidates</span></div>'
+            f'<span style="font-size:0.78rem;color:var(--muted);margin-left:0.6rem">Target: top {top_n}</span>',
+            unsafe_allow_html=True
+        )
+    with t_col2:
+        if st.button(f"Select top {top_n}", key=f"btn_top_{job_id}", help=f"Quickly select the top {top_n} candidates by score"):
+            top_ids = [a["application_id"] for a in selectable_apps[:top_n]]
+            st.session_state[sel_key] = list(dict.fromkeys(top_ids))
+            st.rerun()
+    with t_col3:
+        if st.button("Select all", key=f"btn_all_{job_id}"):
+            st.session_state[sel_key] = [a["application_id"] for a in selectable_apps]
+            st.rerun()
+    with t_col4:
+        if st.button("Clear", key=f"btn_clear_{job_id}", help="Clear selection"):
+            st.session_state[sel_key] = []
             st.rerun()
 
+    # 4. Candidate cards list
+    for a in sorted_apps:
+        aid = a["application_id"]
+        is_locked = a["status"] not in ("SCORED", "SHORTLISTED")
+        is_selected = aid in selected_ids
 
-def schedule_section(job_id, apps):
+        c_info, c_btn = st.columns([4.2, 1.3])
+        with c_info:
+            C._emit(C.candidate_card_html(a, job_title, is_selected=is_selected, is_locked=is_locked))
+        with c_btn:
+            st.write("")
+            if is_locked:
+                st.caption("🔒 Scheduled")
+            elif is_selected:
+                if st.button("✕ Remove", key=f"btn_rem_{job_id}_{aid}", use_container_width=True):
+                    st.session_state[sel_key] = H.remove_candidate_from_selection(st.session_state[sel_key], aid)
+                    st.rerun()
+            else:
+                if st.button("➕ Add", key=f"btn_add_{job_id}_{aid}", type="secondary", use_container_width=True):
+                    st.session_state[sel_key] = H.add_candidate_to_selection(st.session_state[sel_key], aid)
+                    st.rerun()
+
+    # 5. Summary & Confirmation Area
+    st.markdown('<div class="iq-sl-confirm-box">', unsafe_allow_html=True)
+    st.markdown(f"#### Shortlist Confirmation for {job_title}")
+
+    has_unconfirmed_changes = set(selected_ids) != set(confirmed_in_db)
+    if num_selected == 0:
+        C.callout("neutral", "No candidates selected",
+                  f"Click '➕ Add' on any candidate card above or use 'Select top {top_n}' to build your shortlist.")
+    else:
+        names_summary = ", ".join(
+            f"**{a['name'] or a['application_id']}** ({a['resume_score']:.1f}/10)"
+            for a in selectable_apps if a["application_id"] in selected_ids
+        )
+        st.markdown(f"**{num_selected} candidate(s) ready to confirm:** {names_summary}")
+        if has_unconfirmed_changes:
+            st.caption("⚠️ Changes staged in this view require confirmation before candidates become eligible for interview scheduling.")
+
+    b_col1, b_col2 = st.columns([2, 1])
+    with b_col1:
+        if st.button("Confirm shortlist", type="primary", use_container_width=True, key=f"btn_confirm_{job_id}"):
+            valid, errors = H.validate_shortlist_selection(selected_ids, selectable_apps)
+            if not valid:
+                for err in errors:
+                    C.callout("error", "Validation error", err)
+            else:
+                res = api.call("POST", f"/jobs/{job_id}/shortlist", json={"application_ids": selected_ids})
+                if res is not None:
+                    api.flash("success", "Shortlist Confirmed",
+                              f"Successfully shortlisted {len(selected_ids)} candidate(s) for '{job_title}'. "
+                              f"You can now schedule their interviews in Step 2 below.")
+                    st.rerun()
+
+    with b_col2:
+        if confirmed_in_db:
+            if st.button("Reset shortlist", use_container_width=True, key=f"btn_reset_{job_id}", help="Un-shortlist all candidates and return them to Scored status"):
+                res = api.call("POST", f"/jobs/{job_id}/shortlist", json={"application_ids": []})
+                if res is not None:
+                    st.session_state[sel_key] = []
+                    api.flash("info", "Shortlist Reset", f"Shortlist for '{job_title}' was reset. All candidates returned to Scored status.")
+                    st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def schedule_section(job_id, apps, job_title="Position"):
     C.section("2. Schedule interviews", "Each shortlisted candidate gets the earliest free slot. The backend refuses double bookings.")
+    # Only confirmed shortlisted candidates move to interview scheduling
     pending = [a for a in apps if a["status"] == "SHORTLISTED"]
     if pending:
-        C.callout("info", f"{len(pending)} shortlisted candidate(s) need a slot", ", ".join(a["name"] or f"#{a['application_id']}" for a in pending))
+        C.callout("info", f"{len(pending)} confirmed candidate(s) need a slot", ", ".join(a["name"] or f"#{a['application_id']}" for a in pending))
+    else:
+        st.caption("No pending shortlisted candidates need scheduling right now.")
     if st.button("Schedule shortlisted candidates", type="primary", disabled=not pending):
         with st.spinner("Finding free slots..."):
             res = api.call("POST", f"/jobs/{job_id}/schedule")

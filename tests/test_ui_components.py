@@ -142,3 +142,35 @@ def test_competency_evidence_html_handles_missing_evidence():
     assert "No direct mentions, responsibilities, or projects related to this competency were identified" in html
     assert "No relevant evidence was identified in the resume text" in html
     assert "Have you worked with Kubernetes in any role?" in html
+
+
+def test_candidate_card_html_renders_fields_and_states():
+    cand = {
+        "application_id": 42,
+        "name": "Aarav Mehta",
+        "email": "aarav@example.com",
+        "rank": 1,
+        "resume_score": 8.5,
+        "status": "SCORED",
+        "shortlisted": False
+    }
+    # Test selected card
+    html = C.candidate_card_html(cand, "Senior Backend Engineer", is_selected=True, is_locked=False)
+    assert "Aarav Mehta" in html
+    assert "aarav@example.com" in html
+    assert "Senior Backend Engineer" in html
+    assert "Rank #1" in html
+    assert "8.5" in html
+    assert "/ 10" in html
+    assert "is-selected" in html
+    assert "Selected (Pending Confirmation)" in html
+
+    # Test confirmed shortlisted card
+    cand_shortlisted = {**cand, "shortlisted": True}
+    html_short = C.candidate_card_html(cand_shortlisted, "Senior Backend Engineer", is_selected=False, is_locked=False)
+    assert "Shortlist Confirmed" in html_short
+
+    # Test locked/scheduled card
+    html_locked = C.candidate_card_html(cand, "Senior Backend Engineer", is_selected=False, is_locked=True)
+    assert "is-locked" in html_locked
+    assert "Interview Scheduled" in html_locked

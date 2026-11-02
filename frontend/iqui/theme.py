@@ -154,6 +154,24 @@ padding:.7rem .9rem;background:#0F1626;border-bottom:1px solid var(--border);whi
 .iq-probe-tag{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--primary-hover);font-weight:600;margin-bottom:.2rem}
 .iq-probe-q{background:rgba(22,119,255,.08);border-left:2px solid var(--primary-hover);padding:.55rem .85rem;border-radius:0 6px 6px 0;font-size:.87rem;color:var(--text);font-weight:500;line-height:1.45}
 
+/* ---------- shortlist candidate cards ---------- */
+.iq-sl-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem}
+.iq-sl-pill{display:inline-flex;align-items:center;gap:.45rem;background:#172238;border:1px solid #233554;border-radius:20px;padding:.35rem .85rem;font-size:.82rem;font-weight:600;color:var(--text)}
+.iq-sl-pill i{width:8px;height:8px;border-radius:50%;background:var(--primary)}
+.iq-cand-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.2rem;margin-bottom:.85rem;transition:border-color .15s,box-shadow .15s;position:relative}
+.iq-cand-card:hover{border-color:rgba(22,119,255,.4)}
+.iq-cand-card.is-selected{border-color:var(--primary);border-left:4px solid var(--primary);background:linear-gradient(90deg,rgba(22,119,255,.06) 0%,rgba(17,24,39,1) 40%)}
+.iq-cand-card.is-locked{border-color:var(--border);border-left:4px solid var(--muted);opacity:.85}
+.iq-cand-top{display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;flex-wrap:wrap}
+.iq-cand-meta{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}
+.iq-rank-badge{background:#172238;color:var(--primary-hover);border:1px solid rgba(22,119,255,.4);border-radius:6px;padding:.2rem .55rem;font-size:.78rem;font-weight:700;letter-spacing:.03em}
+.iq-cand-name{font-size:1.05rem;font-weight:650;color:var(--text);letter-spacing:-.01em}
+.iq-cand-role{font-size:.82rem;color:var(--muted);margin-top:.15rem}
+.iq-cand-scorebox{display:flex;align-items:center;gap:.75rem}
+.iq-cand-score{font-weight:700;font-size:1.1rem;color:var(--text)}
+.iq-cand-score small{font-size:.75rem;color:var(--muted);font-weight:400}
+.iq-sl-confirm-box{background:var(--card);border:1px solid rgba(22,119,255,.3);border-radius:var(--radius);padding:1.1rem 1.3rem;margin-top:1.2rem}
+
 /* ---------- native widgets ---------- */
 .stButton>button,.stDownloadButton>button,[data-testid="stFormSubmitButton"]>button{border-radius:var(--radius-sm);border:1px solid var(--border);
 background:var(--card);color:var(--text);font-weight:550;padding:.5rem 1rem;transition:background .15s,border-color .15s,transform .05s}

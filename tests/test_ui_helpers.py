@@ -147,3 +147,80 @@ def test_analyze_competency_details_missing_evidence():
     assert "aws" in info["relevance_explanation"]
     assert any("Missing core domain technologies" in p for p in info["missing_points"])
     assert any("Gap Exploration Probe" in q["tag"] for q in info["suggested_questions"])
+
+
+def test_sort_candidates_by_score_descending():
+    apps = [
+        {"application_id": 1, "resume_score": 6.5, "rank": 3},
+        {"application_id": 2, "resume_score": 9.2, "rank": 1},
+        {"application_id": 3, "resume_score": 7.8, "rank": 2},
+        {"application_id": 4, "resume_score": None, "rank": None},
+    ]
+    sorted_apps = h.sort_candidates_by_score(apps)
+    assert [a["application_id"] for a in sorted_apps] == [2, 3, 1, 4]
+    assert sorted_apps[0]["resume_score"] == 9.2
+    assert sorted_apps[1]["resume_score"] == 7.8
+    assert sorted_apps[2]["resume_score"] == 6.5
+
+
+def test_shortlist_selection_add_remove_deduplication():
+    selected = [10, 20]
+    # Add new candidate
+    selected = h.add_candidate_to_selection(selected, 30)
+    assert selected == [10, 20, 30]
+
+    # Add duplicate candidate - should be prevented
+    selected = h.add_candidate_to_selection(selected, 20)
+    assert selected == [10, 20, 30]
+
+    # Remove candidate
+    selected = h.remove_candidate_from_selection(selected, 20)
+    assert selected == [10, 30]
+
+    # Remove non-existent candidate
+    selected = h.remove_candidate_from_selection(selected, 99)
+    assert selected == [10, 30]
+
+
+def test_validate_shortlist_selection_rules():
+    apps = [
+        {"application_id": 1, "name": "Alice", "status": "SCORED", "resume_score": 8.0},
+        {"application_id": 2, "name": "Bob", "status": "SHORTLISTED", "resume_score": 7.5},
+        {"application_id": 3, "name": "Charlie", "status": "SCHEDULED", "resume_score": 9.0},
+    ]
+
+    # 1. Empty selection is invalid
+    ok, errors = h.validate_shortlist_selection([], apps)
+    assert not ok
+    assert any("No candidates selected" in e for e in errors)
+
+    # 2. Duplicate selection is invalid
+    ok, errors = h.validate_shortlist_selection([1, 1], apps)
+    assert not ok
+    assert any("Duplicate" in e for e in errors)
+
+    # 3. Scheduled candidate cannot be altered
+    ok, errors = h.validate_shortlist_selection([3], apps)
+    assert not ok
+    assert any("past the shortlisting stage" in e for e in errors)
+
+    # 4. Unknown application is invalid
+    ok, errors = h.validate_shortlist_selection([999], apps)
+    assert not ok
+    assert any("does not belong" in e for e in errors)
+
+    # 5. Valid selection passes
+    ok, errors = h.validate_shortlist_selection([1, 2], apps)
+    assert ok
+    assert errors == []
+
+
+def test_get_confirmed_shortlist_ids_filters_correctly():
+    apps = [
+        {"application_id": 1, "shortlisted": True, "status": "SHORTLISTED"},
+        {"application_id": 2, "shortlisted": False, "status": "SCORED"},
+        {"application_id": 3, "shortlisted": True, "status": "SCHEDULED"}, # locked, not editable
+        {"application_id": 4, "shortlisted": True, "status": "SCORED"},
+    ]
+    confirmed = h.get_confirmed_shortlist_ids(apps)
+    assert confirmed == [1, 4]

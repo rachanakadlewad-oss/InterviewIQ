@@ -258,3 +258,51 @@ def competency_evidence_html(info: dict) -> str:
 def competency_evidence_card(comp: dict, score_data: Optional[dict] = None):
     info = H.analyze_competency_details(comp, score_data)
     _emit(competency_evidence_html(info))
+
+
+def candidate_card_html(cand: dict, job_title: str, is_selected: bool, is_locked: bool) -> str:
+    name = esc(cand.get("name") or f"Candidate #{cand['application_id']}")
+    email = esc(cand.get("email") or "No email provided")
+    role = esc(job_title)
+    rank = cand.get("rank")
+    rank_str = f"Rank #{rank}" if rank is not None else "Rank -"
+    score = cand.get("resume_score")
+    score_val = f"{score:.1f}" if score is not None else "-"
+    pct = max(0.0, min(100.0, (score or 0.0) / 10.0 * 100))
+    tone = H.score_tone(score, 10.0)
+
+    classes = ["iq-cand-card"]
+    if is_selected:
+        classes.append("is-selected")
+    if is_locked:
+        classes.append("is-locked")
+
+    if is_locked:
+        st_badge = badge("Interview Scheduled", "info", dot=True)
+    elif cand.get("shortlisted"):
+        st_badge = badge("Shortlist Confirmed", "success", dot=True)
+    elif is_selected:
+        st_badge = badge("Selected (Pending Confirmation)", "warning", dot=True)
+    else:
+        st_badge = badge("Scored", "neutral", dot=True)
+
+    bar = (f'<div class="iq-bar" style="min-width:120px">'
+           f'<div class="track"><div class="fill {tone}" style="width:{pct:.0f}%"></div></div>'
+           f'<span>{score_val}</span></div>')
+
+    return (f'<div class="{" ".join(classes)}">'
+            f'<div class="iq-cand-top">'
+            f'<div style="flex:1">'
+            f'<div class="iq-cand-meta">'
+            f'<span class="iq-rank-badge">{rank_str}</span>'
+            f'<span class="iq-cand-name">{name}</span>'
+            f'{st_badge}'
+            f'</div>'
+            f'<div class="iq-cand-role">Position: <b>{role}</b> &nbsp;·&nbsp; {email}</div>'
+            f'</div>'
+            f'<div class="iq-cand-scorebox">'
+            f'<div class="iq-cand-score">{score_val} <small>/ 10</small></div>'
+            f'{bar}'
+            f'</div>'
+            f'</div>'
+            f'</div>')

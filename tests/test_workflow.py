@@ -3,7 +3,7 @@ import json
 import pytest
 from sqlalchemy import select
 
-from app.db import AssessmentRow, IdentityCheckRow, ReviewItem, Slot
+from app.db import Application, AssessmentRow, IdentityCheckRow, ReviewItem, Slot
 from app.services import reports, scheduler
 from app.services.state_machine import GateViolation
 from app.workflow.supervisor import Supervisor
@@ -261,3 +261,72 @@ def test_assessment_failure_is_recorded_and_retry_works(db, settings):
     assert a.status == "ASSESSED"
     with pytest.raises(GateViolation):
         sv.retry_assessment(a.id)
+
+
+def test_recruiter_shortlist_selection_confirmation_and_refresh_workflow(db, settings):
+    from frontend.iqui import helpers as H
+    job = make_job(db)
+    apps = [add_resume(db, job, f) for f in FILES]
+    sv = Supervisor(db, settings)
+    sv.screen_job(job.id)
+
+    # 1. Fetch apps and verify descending score order
+    db_apps = [{"application_id": a.id, "name": a.candidate_name, "status": a.status,
+                "resume_score": a.resume_score, "rank": a.rank, "shortlisted": a.shortlisted}
+               for a in db.execute(select(Application).where(Application.job_id == job.id)).scalars()]
+    sorted_apps = H.sort_candidates_by_score(db_apps)
+    scores = [a["resume_score"] for a in sorted_apps if a["resume_score"] is not None]
+    assert scores == sorted(scores, reverse=True)
+
+    # 2. Before confirmation: no auto-shortlist (recruiter has complete control)
+    confirmed_initial = H.get_confirmed_shortlist_ids(sorted_apps)
+    assert confirmed_initial == []
+
+    # 3. Add candidates to selection
+    cand1, cand2 = sorted_apps[0]["application_id"], sorted_apps[1]["application_id"]
+    selected = []
+    selected = H.add_candidate_to_selection(selected, cand1)
+    # Duplicate prevention: adding cand1 again is a no-op
+    selected = H.add_candidate_to_selection(selected, cand1)
+    assert selected == [cand1]
+    selected = H.add_candidate_to_selection(selected, cand2)
+    assert selected == [cand1, cand2]
+
+    # 4. Remove candidate
+    selected = H.remove_candidate_from_selection(selected, cand2)
+    assert selected == [cand1]
+
+    # 5. Empty selection validation
+    empty_valid, errs = H.validate_shortlist_selection([], sorted_apps)
+    assert not empty_valid and any("No candidates selected" in e for e in errs)
+
+    # 6. Valid selection validation
+    selected = H.add_candidate_to_selection(selected, cand2)
+    valid, errs = H.validate_shortlist_selection(selected, sorted_apps)
+    assert valid and not errs
+
+    # 7. Unconfirmed candidates do NOT move to scheduling yet
+    pending_before = [a for a in db.execute(select(Application).where(Application.job_id == job.id)).scalars()
+                      if a.status == "SHORTLISTED"]
+    assert len(pending_before) == 0
+
+    # 8. Recruiter confirms shortlist
+    sv.shortlist(job.id, selected)
+
+    # 9. Verify confirmed candidates move to SHORTLISTED status
+    confirmed_apps = db.execute(select(Application).where(Application.job_id == job.id)).scalars().all()
+    shortlisted_map = {a.id: (a.shortlisted, a.status) for a in confirmed_apps}
+    assert shortlisted_map[cand1] == (True, "SHORTLISTED")
+    assert shortlisted_map[cand2] == (True, "SHORTLISTED")
+
+    # 10. Simulate Page Refresh: fresh session reading from database
+    db_apps_refreshed = [{"application_id": a.id, "name": a.candidate_name, "status": a.status,
+                          "resume_score": a.resume_score, "rank": a.rank, "shortlisted": a.shortlisted}
+                         for a in db.execute(select(Application).where(Application.job_id == job.id)).scalars()]
+    confirmed_after_refresh = H.get_confirmed_shortlist_ids(db_apps_refreshed)
+    assert set(confirmed_after_refresh) == {cand1, cand2}
+
+    # 11. Now confirmed candidates can be scheduled
+    res_sched = scheduler.schedule_shortlisted(db, settings, job, now=FUTURE)
+    assert len(res_sched) == 2
+    assert all(r["scheduled"] for r in res_sched)

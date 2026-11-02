@@ -272,3 +272,60 @@ def analyze_competency_details(comp: dict, score_data: Optional[dict]) -> dict:
         "missing_points": missing_points,
         "suggested_questions": suggested_questions,
     }
+
+
+# ---- shortlist management helpers -------------------------------------------
+def sort_candidates_by_score(apps: List[dict]) -> List[dict]:
+    """Sorts candidates strictly in descending order of resume score, secondary by rank."""
+    return sorted(
+        apps,
+        key=lambda a: (
+            -float(a.get("resume_score") if a.get("resume_score") is not None else -1.0),
+            a.get("rank") if a.get("rank") is not None else 9999,
+            a.get("application_id", 0)
+        )
+    )
+
+
+def get_confirmed_shortlist_ids(apps: List[dict]) -> List[int]:
+    """Returns application IDs confirmed as shortlisted in the database and still editable."""
+    return [
+        a["application_id"]
+        for a in apps
+        if a.get("shortlisted") and a.get("status") in ("SCORED", "SHORTLISTED")
+    ]
+
+
+def add_candidate_to_selection(selected_ids: List[int], app_id: int) -> List[int]:
+    """Adds candidate ID ensuring no duplicates."""
+    res = list(selected_ids)
+    if app_id not in res:
+        res.append(app_id)
+    return res
+
+
+def remove_candidate_from_selection(selected_ids: List[int], app_id: int) -> List[int]:
+    """Removes candidate ID if present."""
+    return [i for i in selected_ids if i != app_id]
+
+
+def validate_shortlist_selection(selected_ids: List[int], apps: List[dict]) -> Tuple[bool, List[str]]:
+    """Validates candidate selection before confirmation against pipeline rules."""
+    errors = []
+    if not selected_ids:
+        errors.append("No candidates selected. Please select at least one candidate before confirming the shortlist.")
+        return False, errors
+
+    if len(selected_ids) != len(set(selected_ids)):
+        errors.append("Duplicate candidate selections detected.")
+
+    app_map = {a["application_id"]: a for a in apps}
+    for aid in selected_ids:
+        if aid not in app_map:
+            errors.append(f"Application #{aid} does not belong to this job or is unscored.")
+        else:
+            cand = app_map[aid]
+            if cand.get("status") not in ("SCORED", "SHORTLISTED"):
+                errors.append(f"Candidate {cand.get('name') or f'#{aid}'} is already past the shortlisting stage ({cand.get('status')}).")
+
+    return (len(errors) == 0), errors
