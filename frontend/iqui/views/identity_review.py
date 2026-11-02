@@ -414,3 +414,7 @@ def identity_history_table(checks):
         ("why", "Reason / Explanation")
     ], rows)
 
+
+identity_table = identity_history_table
+
+

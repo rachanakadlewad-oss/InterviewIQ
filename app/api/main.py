@@ -367,6 +367,10 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     def retry(application_id: int, sv: Supervisor = Depends(sup)):
         return sv.retry_assessment(application_id)
 
+    @app.post("/applications/{application_id}/conduct-interview", dependencies=[Depends(recruiter)])
+    def conduct_interview_endpoint(application_id: int, sv: Supervisor = Depends(sup)):
+        return sv.conduct_interview(application_id)
+
     @app.post("/applications/{application_id}/purge-biometrics", dependencies=[Depends(recruiter)])
     def purge(application_id: int, sv: Supervisor = Depends(sup)):
         return {"deleted": sv.purge_biometrics(application_id)}

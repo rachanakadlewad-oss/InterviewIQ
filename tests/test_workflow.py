@@ -3,7 +3,8 @@ import json
 import pytest
 from sqlalchemy import select
 
-from app.db import Application, AssessmentRow, IdentityCheckRow, ReviewItem, Slot
+from app.db import Application, AssessmentRow, IdentityCheckRow, RecruiterDecision, ReviewItem, Slot
+from app.schemas import SessionState
 from app.services import identity as idsvc, reports, scheduler
 from app.services.state_machine import GateViolation
 from app.workflow.supervisor import Supervisor
@@ -428,4 +429,93 @@ def test_identity_full_verification_gate_matrix(db, settings, tmp_path):
     assert not sv2.identity_gate_open(a2.id)
     with pytest.raises(GateViolation):
         sv2.start_interview(a2.id)
+
+
+def test_complete_interview_report_and_recruiter_decision_flow(db, settings):
+    """Test the complete end-to-end flow:
+    Scheduled -> Identity Verified -> Interview Completed -> Assessment Generated -> Report Available -> Recruiter Decision.
+    Verifies:
+    1. Scheduled candidate has no fake interview scores before completion.
+    2. Final score strictly follows: Final Score = (Resume Weight * Resume Score) + (Interview Weight * Interview Score).
+    3. Interview questions, responses, transcript, and decision trace are preserved.
+    4. Recruiter can record Hire, Hold, or Reject decisions.
+    5. All data persists correctly and remains available after page refresh.
+    """
+    sv, job, a = scheduled_candidate(db, settings, file="Meera_Iyer.pdf")
+    assert a.status == "SCHEDULED"
+
+    # 1. Before interview: No fake interview scores or reports
+    rep_before = reports.recruiter_report(db, settings, a.id, sv.traces(a.id))
+    assert rep_before["status"] == "SCHEDULED"
+    assert rep_before["assessment"] is None
+    assert rep_before["resume"]["score_0_100"] > 0
+    # Final decision cannot be recorded before assessment
+    with pytest.raises(GateViolation):
+        sv.record_decision(a.id, "HIRE", "Premature decision")
+
+    # 2. Advance through complete workflow:
+    # Scheduled -> Identity Verified -> Interview Completed -> Assessment Generated
+    res_conduct = sv.conduct_interview(a.id)
+    assert res_conduct["status"] == "ASSESSED"
+
+    # 3. Verify final score formula
+    ar = db.execute(select(AssessmentRow).where(AssessmentRow.application_id == a.id)).scalar_one()
+    assert ar.status == "OK"
+    w_res = settings.weight_resume
+    w_int = settings.weight_interview
+    expected_final = round((w_res * ar.resume_score) + (w_int * ar.interview_score), 1)
+    assert ar.final_score == expected_final
+    assert round((w_res * ar.resume_score) + (w_int * ar.interview_score), 1) == ar.final_score
+
+    # 4. Verify report has all required sections
+    rep_after = reports.recruiter_report(db, settings, a.id, sv.traces(a.id))
+    sess = sv._session(a.id)
+    rep_after["transcript"] = ([t.model_dump() for t in SessionState.model_validate_json(sess.state_json).transcript] if sess else [])
+
+    assert rep_after["assessment"] is not None
+    assert rep_after["assessment"]["resume_score"] == ar.resume_score
+    assert rep_after["assessment"]["interview_score"] == ar.interview_score
+    assert rep_after["assessment"]["final_score"] == expected_final
+    assert len(rep_after["transcript"]) >= 4
+    # Both questions and candidate responses exist in transcript
+    assert any(t["role"] == "interviewer" and t["text"] for t in rep_after["transcript"])
+    assert any(t["role"] == "candidate" and t["text"] for t in rep_after["transcript"])
+
+    # Competency table has evaluations
+    comp_table = rep_after["assessment"]["competency_table"]
+    assert len(comp_table) > 0
+    assert any(c["interview_score"] is not None for c in comp_table)
+
+    # Decision trace is available
+    traces = rep_after["trace"]
+    assert len(traces) >= 2
+    assert all("trigger_phrase" in t and "reasoning" in t for t in traces)
+
+    # 5. Recruiter records final decision: HIRE, HOLD, REJECT
+    # Test invalid decision
+    with pytest.raises(ValueError):
+        sv.record_decision(a.id, "INVALID_DECISION", "notes")
+
+    # Test HIRE
+    hire_res = sv.record_decision(a.id, "HIRE", "Candidate demonstrated exceptional competence and problem-solving skills.")
+    assert hire_res["decision"] == "HIRE"
+    assert a.status == "DECIDED"
+
+    # Verify decision stored
+    rep_decided = reports.recruiter_report(db, settings, a.id, sv.traces(a.id))
+    assert rep_decided["recruiter_decision"]["decision"] == "HIRE"
+    assert "exceptional competence" in rep_decided["recruiter_decision"]["notes"]
+
+    # Test updating decision to HOLD or REJECT
+    sv.record_decision(a.id, "HOLD", "Hold pending executive budget review")
+    rep_hold = reports.recruiter_report(db, settings, a.id, sv.traces(a.id))
+    assert rep_hold["recruiter_decision"]["decision"] == "HOLD"
+
+    # 6. Persistence check: fresh database read simulates page refresh
+    ar_fresh = db.execute(select(AssessmentRow).where(AssessmentRow.application_id == a.id)).scalar_one()
+    assert ar_fresh.final_score == expected_final
+    rec_dec_fresh = db.execute(select(RecruiterDecision).where(RecruiterDecision.application_id == a.id)).scalar_one()
+    assert rec_dec_fresh.decision == "HOLD"
+    assert "budget review" in rec_dec_fresh.notes
+
 

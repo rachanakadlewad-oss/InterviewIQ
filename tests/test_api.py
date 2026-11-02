@@ -220,3 +220,49 @@ def test_identity_candidates_endpoint_and_lifecycle(client):
     assert resolved_item["resolution"] == "approve_manual_pass"
     assert "Approved via manual passport" in resolved_item["notes"]
 
+
+def test_conduct_interview_api_and_recruiter_decision(client):
+    job = client.post("/jobs/load-sample").json()
+    app_id = upload(client, job["id"], "Meera_Iyer.pdf").json()["application_id"]
+    client.post(f"/jobs/{job['id']}/screen")
+    client.post(f"/jobs/{job['id']}/shortlist", json={"application_ids": [app_id]})
+    sched = client.post(f"/jobs/{job['id']}/schedule").json()
+    assert len(sched) == 1
+
+    # 1. Before interview: report shows assessment is null and decision is blocked
+    rep_before = client.get(f"/applications/{app_id}/report").json()
+    assert rep_before["assessment"] is None
+    res_early_dec = client.post(f"/applications/{app_id}/decision", json={"decision": "HIRE", "notes": "Premature"})
+    assert res_early_dec.status_code in (400, 409)
+
+    # 2. Advance workflow via conduct-interview
+    res_conduct = client.post(f"/applications/{app_id}/conduct-interview")
+    assert res_conduct.status_code == 200
+    assert res_conduct.json()["status"] == "ASSESSED"
+
+    # 3. Read complete report
+    rep = client.get(f"/applications/{app_id}/report").json()
+    asm = rep["assessment"]
+    assert asm is not None
+    assert asm["resume_score"] > 0
+    assert asm["interview_score"] > 0
+    w_res = rep["configured_weights"]["resume"]
+    w_int = rep["configured_weights"]["interview"]
+    expected_final = round((w_res * asm["resume_score"]) + (w_int * asm["interview_score"]), 1)
+    assert asm["final_score"] == expected_final
+
+    # Transcript and competency table checks
+    assert len(rep["transcript"]) >= 4
+    assert any(c["interview_score"] is not None for c in asm["competency_table"])
+
+    # 4. Record Recruiter Hiring Decision
+    res_dec = client.post(f"/applications/{app_id}/decision", json={"decision": "HIRE", "notes": "Approved for offer."})
+    assert res_dec.status_code == 200
+
+    # 5. Verify decision recorded in report
+    rep_decided = client.get(f"/applications/{app_id}/report").json()
+    assert rep_decided["status"] == "DECIDED"
+    assert rep_decided["recruiter_decision"]["decision"] == "HIRE"
+    assert "Approved for offer" in rep_decided["recruiter_decision"]["notes"]
+
+

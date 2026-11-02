@@ -81,6 +81,44 @@ def candidate_steps(status: str) -> List[Tuple[str, str]]:
     return out
 
 
+RECRUITER_STAGES = [
+    "Scheduled",
+    "Identity Verified",
+    "Interview Conducted",
+    "Assessment Generated",
+    "Report Available",
+    "Recruiter Decision"
+]
+
+
+def recruiter_workflow_steps(status: str) -> List[Tuple[str, str]]:
+    """Return [(label, state)] for the recruiter assessment workflow pipeline."""
+    curr_idx = {
+        "PARSED": 0, "SCORING_FAILED": 0, "SCORED": 0, "SHORTLISTED": 0,
+        "SCHEDULED": 1,
+        "HUMAN_REVIEW": 1,
+        "REJECTED_AT_REVIEW": 1,
+        "IDENTITY_PASSED": 2,
+        "INTERVIEW_IN_PROGRESS": 2,
+        "INTERVIEW_COMPLETE": 3,
+        "ASSESSMENT_FAILED": 3,
+        "ASSESSED": 5,
+        "DECIDED": 6
+    }.get(status, 1)
+
+    out = []
+    for i, label in enumerate(RECRUITER_STAGES):
+        if status == "DECIDED":
+            out.append((label, "done"))
+        elif i < curr_idx:
+            out.append((label, "done"))
+        elif i == curr_idx:
+            out.append((label, "current"))
+        else:
+            out.append((label, "todo"))
+    return out
+
+
 def candidate_message(status: str) -> Tuple[str, str, str]:
     """-> (headline, explanation, tone)"""
     m = {

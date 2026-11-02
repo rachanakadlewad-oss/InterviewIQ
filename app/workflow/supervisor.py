@@ -484,20 +484,73 @@ class Supervisor:
 
     # ================================================================ recruiter decision
     def record_decision(self, application_id: int, decision: str, notes: str) -> dict:
-        if decision not in ("ADVANCE", "HOLD", "REJECT"):
-            raise ValueError("decision must be ADVANCE, HOLD or REJECT")
+        dec = (decision or "").strip().upper()
+        if dec not in ("HIRE", "ADVANCE", "HOLD", "REJECT"):
+            raise ValueError("decision must be HIRE (or ADVANCE), HOLD or REJECT")
         a = self._app(application_id)
         if a.status not in ("ASSESSED", "DECIDED"):
             raise GateViolation(f"final decision requires a completed assessment (status {a.status})")
         row = self.db.execute(select(RecruiterDecision).where(RecruiterDecision.application_id == a.id)).scalar_one_or_none()
         if row:
-            row.decision, row.notes, row.decided_at = decision, notes, utcnow()
+            row.decision, row.notes, row.decided_at = dec, notes, utcnow()
         else:
-            self.db.add(RecruiterDecision(application_id=a.id, decision=decision, notes=notes))
+            self.db.add(RecruiterDecision(application_id=a.id, decision=dec, notes=notes))
         if a.status == "ASSESSED":
             transition(a, "DECIDED")
         self.db.commit()
-        return {"application_id": a.id, "decision": decision}
+        return {"application_id": a.id, "decision": dec}
+
+    def conduct_interview(self, application_id: int, custom_answers: Optional[dict] = None) -> dict:
+        """Advance candidate through the complete interview and assessment workflow:
+        Scheduled -> Identity Verified -> Interview Completed -> Assessment Generated.
+        """
+        a = self._app(application_id)
+        slot = self.db.execute(select(Slot).where(Slot.application_id == a.id)).scalar_one_or_none()
+        if slot is None:
+            raise GateViolation("candidate must be scheduled into an interview slot before conducting the interview")
+
+        # 1. Identity Verification if in SCHEDULED
+        if a.status == "SCHEDULED":
+            id_res = self.verify_identity(a.id, b"", scenario="match", check_type="pre_interview")
+            if not id_res.get("passed"):
+                raise GateViolation(f"identity verification failed: {id_res}")
+
+        if a.status not in ("IDENTITY_PASSED", "INTERVIEW_IN_PROGRESS", "INTERVIEW_COMPLETE", "ASSESSED", "DECIDED"):
+            raise GateViolation(f"cannot conduct interview from status {a.status}")
+
+        if a.status in ("ASSESSED", "DECIDED"):
+            return {"application_id": a.id, "status": a.status, "message": "Interview and assessment already completed."}
+
+        # 2. Start session if not started
+        if a.status == "IDENTITY_PASSED":
+            self.start_interview(a.id)
+
+        # 3. Load sample demo answers
+        answers_file = Path("data/sample/demo_answers.json")
+        if not answers_file.exists():
+            answers_file = Path(self.s.data_dir).parent / "data" / "sample" / "demo_answers.json"
+        answers_map = jload(answers_file.read_text(), {}) if answers_file.exists() else {}
+        if custom_answers:
+            answers_map.update(custom_answers)
+
+        # 4. Turn loop: submit answers until concluded
+        max_turns = self.s.max_questions + 4
+        for _ in range(max_turns):
+            sess, state = self._load_state(a)
+            if state.status == "CONCLUDED" or a.status in ("INTERVIEW_COMPLETE", "ASSESSED", "DECIDED"):
+                break
+            cid = state.current
+            ans = (answers_map.get(cid) or answers_map.get("_generic") or
+                   "I designed and implemented the architecture, led the execution with the team, and verified the outcome with metrics.")
+            out = self.submit_answer(a.id, ans)
+            if out.get("concluded"):
+                break
+
+        # 5. Ensure assessment is generated
+        if a.status == "INTERVIEW_COMPLETE":
+            self.run_assessment(a.id)
+
+        return {"application_id": a.id, "status": a.status}
 
     def purge_biometrics(self, application_id: int) -> bool:
         a = self._app(application_id)

@@ -21,6 +21,7 @@ def recruiter_report(db, settings, application_id: int, traces: list) -> dict:
     dec = db.execute(select(RecruiterDecision).where(RecruiterDecision.application_id == a.id)).scalar_one_or_none()
     rep = {
         "application_id": a.id, "candidate": a.candidate_name, "email": a.email, "job": job.title, "status": a.status,
+        "configured_weights": {"resume": settings.weight_resume, "interview": settings.weight_interview},
         "profile": jload(a.profile_json, {}), "resume": {"score_0_100": a.resume_score, "rank": a.rank,
                                                          "source": a.scoring_source, "summary": a.resume_summary,
                                                          "per_competency": rs.get("scores", [])},
