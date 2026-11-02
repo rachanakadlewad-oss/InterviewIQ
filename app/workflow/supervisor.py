@@ -97,7 +97,7 @@ class Supervisor:
         q = select(Application).where(Application.job_id == st["job_id"])
         apps = self.db.execute(q).scalars().all()
         todo = [a.id for a in apps if a.status in ("PARSED", "SCORING_FAILED") or
-                (st.get("rescore") and a.status == "SCORED")]
+                (st.get("rescore") and a.status in ("SCORED", "SHORTLISTED") and a.resume_text)]
         return {"app_ids": todo, "result": {"scored": [], "failed": []}}
 
     def _n_score(self, st):

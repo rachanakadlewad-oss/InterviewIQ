@@ -53,7 +53,23 @@ def render():
         p = rep["profile"]
         C.kv([("Name", p.get("name")), ("Email", p.get("email")), ("Experience (years)", p.get("experience_years") or "not stated")])
         if p.get("skills"):
+            st.markdown("**Skills detected in resume**")
             C.badges(*[C.badge(s, "neutral", dot=False) for s in p["skills"]])
+        if p.get("experience"):
+            st.markdown("**Experience & roles**")
+            for ex in p["experience"]:
+                C.quote(ex)
+        if p.get("projects"):
+            st.markdown("**Projects & deliverables**")
+            for pr in p["projects"]:
+                C.quote(pr)
+        if p.get("education"):
+            st.markdown("**Education**")
+            for ed in p["education"]:
+                C.quote(ed)
+        if p.get("summary"):
+            st.markdown("**Summary**")
+            C.quote(p["summary"])
     decision_panel(rep, pick)
     st.download_button("Download this report (JSON)", json.dumps(rep, indent=2, default=str), file_name=f"interviewiq_report_{pick}.json", mime="application/json")
 

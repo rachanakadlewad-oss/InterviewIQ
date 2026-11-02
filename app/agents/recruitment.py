@@ -9,15 +9,42 @@ from app.textutil import contains_quote
 
 log = logging.getLogger(__name__)
 
-SCORE_SYSTEM = """You are the Recruitment Agent in a hiring pipeline. Score a candidate's resume against EACH job
-competency from 0 to 10 using the supplied rubric (1 = minimal, 3 = working, 5 = strong; interpolate to 10).
-Rules: (1) every score above 0 MUST cite 1-3 evidence excerpts copied VERBATIM from the resume text;
-(2) if the resume has no evidence for a competency score it 0 with empty evidence; (3) never invent experience;
-(4) return one entry for every competency id given; (5) keep justification to one or two sentences."""
+SCORE_SYSTEM = """You are the Recruitment Agent in a hiring pipeline. Semantically evaluate and score a candidate's resume
+against EACH job competency from 0.0 to 10.0 using the supplied rubric (1 = minimal/basic, 3 = working/proficient, 5 = strong/expert; interpolate to a 0-10 scale).
 
-PROFILE_SYSTEM = """You are the Recruitment Agent. Extract a structured profile from the resume text: name, email,
-phone, skills (list), education (list), experience_years (number, total professional years, 0 if unknown), and a
-one-sentence summary. Copy values from the text; use empty values when absent. Do not guess."""
+Evaluation Standards:
+1. Distinguish evidence level for each competency:
+   - DIRECT EVIDENCE: The candidate demonstrates active responsibility, architectural contribution, or technical implementation in professional roles or substantial projects.
+   - PARTIAL EVIDENCE: The technology is merely listed in a skills list, mentioned in an introductory/coursework/tutorial context, or used passively without demonstrated depth or ownership.
+   - MISSING EVIDENCE: No relevant background, skills, or projects found in the resume.
+2. Realistic Scoring Calibration:
+   - Score 0.0: Missing evidence (evidence list MUST be empty).
+   - Score 1.0 - 4.5: Partial evidence. Never award a score above 4.5 for simply listing a skill or mentioning a keyword without active responsibilities.
+   - Score 5.0 - 7.0: Direct evidence of working competency (rubric level 3-4), meeting job requirements with clear responsibilities.
+   - Score 7.5 - 9.0: Direct evidence with advanced responsibilities, architectural depth, or verified measurable achievements.
+   - Reserve 9.5 - 10.0 strictly for exceptional, outstanding evidence demonstrating high-scale production leadership.
+3. Measurable Achievements:
+   - Consider genuine measurable results (e.g., latency reduction %, test coverage %, throughput req/s, users served, team size led).
+   - Do NOT treat dates/years (e.g. 2021-2026), phone numbers, or tool version numbers (e.g. OAuth2, Python 3) as quantified impact.
+4. Verbatim Excerpts:
+   - For every score > 0, cite 1-3 evidence excerpts copied VERBATIM from the resume text.
+   - Never invent, extrapolate, or assume experience not present in the resume text.
+5. Justification:
+   - In 1-2 sentences, state the evidence level ([Direct Evidence], [Partial Evidence], or [Missing Evidence]), summarize the candidate's responsibilities or project context, and state the reason for the score.
+   - Return evidence_level field as "DIRECT", "PARTIAL", or "MISSING"."""
+
+PROFILE_SYSTEM = """You are the Recruitment Agent. Extract a structured profile from the resume text:
+- name: Candidate's full name (or empty string if not found)
+- email: Email address (or empty string if not found)
+- phone: Phone number (or empty string if not found)
+- skills: List of detected technical skills and tools
+- education: List of educational qualifications (degree, major, institution, dates if present)
+- experience_years: Total professional work experience in years as a float (0.0 if unknown or student)
+- summary: A one-sentence professional summary from the resume
+- experience: List of professional roles held (job title, company, dates, and key responsibilities)
+- projects: List of specific projects mentioned in the resume
+
+Copy values directly from the text; use empty values when absent. NEVER invent or assume missing candidate information."""
 
 
 class RecruitmentAgent:

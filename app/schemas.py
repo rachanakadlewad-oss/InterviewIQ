@@ -45,6 +45,8 @@ class ParsedProfile(BaseModel):
     education: List[str] = Field(default_factory=list)
     experience_years: float = Field(default=0.0, ge=0, le=60)
     summary: str = ""
+    experience: List[str] = Field(default_factory=list)
+    projects: List[str] = Field(default_factory=list)
 
 
 class CompetencyScore(BaseModel):
@@ -52,6 +54,7 @@ class CompetencyScore(BaseModel):
     score: float = Field(ge=0, le=10)
     evidence: List[str] = Field(default_factory=list)   # verbatim resume excerpts
     justification: str = Field(min_length=3)
+    evidence_level: Optional[str] = "DIRECT"             # DIRECT | PARTIAL | MISSING
 
 
 class ResumeScoringOutput(BaseModel):

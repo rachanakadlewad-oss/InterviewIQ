@@ -62,13 +62,16 @@ def upload_section(job_id):
 
 
 def screening_section(job_id):
-    C.section("2. Score and rank", "Runs the Recruitment Agent on every candidate that has not been scored yet.")
+    C.section("2. Score and rank", "Runs the Recruitment Agent to evaluate evidence relevance and calculate competency scores.")
     apps = api.call("GET", f"/jobs/{job_id}/applications") or []
     todo = [a for a in apps if a["status"] in ("PARSED", "SCORING_FAILED")]
-    c1, c2 = st.columns([1, 3])
-    clicked = c1.button(f"Score {len(todo)} resume(s)" if todo else "Everything is scored", type="primary", disabled=not todo)
-    c2.caption("Scoring is retried a bounded number of times if the model returns invalid output; failures are listed below and can be re-run.")
-    if clicked:
+    scored_apps = [a for a in apps if a["resume_score"] is not None]
+    c1, c2, c3 = st.columns([1, 1, 2])
+    score_clicked = c1.button(f"Score {len(todo)} resume(s)" if todo else "All scored", type="primary", disabled=not todo)
+    rescore_clicked = c2.button("Rescore all & re-rank", disabled=not scored_apps, help="Recalculate competency scores and update candidate rankings using updated scoring logic.")
+    c3.caption("Evaluates direct vs partial vs missing evidence, checks action responsibilities and verified metrics, and recalculates rankings.")
+
+    if score_clicked:
         with st.spinner("Recruitment Agent is scoring resumes..."):
             r = api.call("POST", f"/jobs/{job_id}/screen")
         if r:
@@ -76,6 +79,17 @@ def screening_section(job_id):
                 C.callout("success", f"Scored {len(r['scored'])} candidate(s)", "Ranking updated below.")
             for f in r["failed"]:
                 C.callout("error", f"Application {f['application_id']} could not be scored", f["error"])
+            st.rerun()
+
+    if rescore_clicked:
+        with st.spinner("Recalculating competency scores and candidate rankings..."):
+            r = api.call("POST", f"/jobs/{job_id}/screen?rescore=true")
+        if r:
+            if r["scored"]:
+                C.callout("success", f"Rescored {len(r['scored'])} candidate(s)", "Candidate rankings recalculated with updated competency scores.")
+            for f in r["failed"]:
+                C.callout("error", f"Application {f['application_id']} could not be scored", f["error"])
+            st.rerun()
 
 
 def list_section(job_id):
@@ -109,6 +123,14 @@ def detail_view(app_id, job, row):
         if p.get("skills"):
             st.markdown("**Skills detected in the resume**")
             C.badges(*[C.badge(s, "neutral", dot=False) for s in p["skills"]])
+        if p.get("experience"):
+            st.markdown("**Professional roles & experience**")
+            for ex in p["experience"]:
+                C.quote(ex)
+        if p.get("projects"):
+            st.markdown("**Key projects & contributions**")
+            for pr in p["projects"]:
+                C.quote(pr)
         if p.get("education"):
             st.markdown("**Education**")
             for e in p["education"]:
@@ -116,23 +138,43 @@ def detail_view(app_id, job, row):
         if p.get("summary"):
             st.markdown("**Summary line from the resume**")
             C.quote(p["summary"])
-        st.caption("Profile fields are extracted from the resume text with pattern matching (and refined by the LLM when configured). Missing fields are left blank, never guessed.")
+        st.caption("Profile fields are extracted directly from the resume text with enhanced pattern matching (refined by LLM when enabled). Missing fields are left blank, never invented.")
     with t_evidence:
         scores = {s["competency_id"]: s for s in rep["resume"]["per_competency"]}
         if not scores:
             C.empty_state("Not scored yet", "Run scoring to see evidence for each competency.")
             return
         if rep["resume"]["source"] == "demo_rules":
-            C.callout("warning", "Demo-rule scores", "Evidence lines were matched by keyword, not understood semantically.")
+            C.callout("warning", "Demo heuristic evaluation",
+                      "Scores are computed using deterministic heuristics that evaluate evidence relevance (Direct vs Partial vs Missing), check action responsibilities and verified metrics, and prevent inflated scores. Configure an LLM provider in .env for semantic AI evaluation.")
+        else:
+            C.callout("info", "AI Semantic evaluation",
+                      "Scores are evaluated by the Recruitment Agent LLM against the competency rubric with verbatim evidence verification.")
         for c in job["competencies"]:
             s = scores.get(c["id"])
             if not s:
                 continue
+            ev_level = s.get("evidence_level")
+            if not ev_level:
+                if "Direct Evidence" in s.get("justification", ""):
+                    ev_level = "DIRECT"
+                elif "Partial Evidence" in s.get("justification", ""):
+                    ev_level = "PARTIAL"
+                elif "Missing Evidence" in s.get("justification", ""):
+                    ev_level = "MISSING"
+
+            lvl_badge = (
+                C.badge("Direct evidence", "success", dot=True) if ev_level == "DIRECT"
+                else C.badge("Partial evidence", "warning", dot=True) if ev_level == "PARTIAL"
+                else C.badge("Missing evidence", "neutral", dot=True)
+            )
+
             with st.expander(f"{c['name']}  -  {s['score']:.1f} / 10", expanded=False):
-                C.badges(C.badge(f"weight {c['weight']}", "neutral", dot=False))
+                C.badges(C.badge(f"weight {c['weight']}", "neutral", dot=False), lvl_badge)
                 st.markdown(s["justification"])
                 if s["evidence"]:
+                    st.caption("Verbatim resume evidence:")
                     for e in s["evidence"]:
                         C.quote(e)
                 else:
-                    C.callout("warning", "No resume evidence found for this competency", "It may be probed in the interview.")
+                    C.callout("neutral", "No resume evidence found for this competency", "No relevant experience, skills, or projects found. It may be probed in the interview.")

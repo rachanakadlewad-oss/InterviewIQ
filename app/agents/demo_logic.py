@@ -11,6 +11,42 @@ from app.textutil import truncate_words, word_count
 
 ACTION_VERBS = r"\b(i|we)\s+(built|designed|implemented|led|wrote|deployed|reduced|improved|fixed|optimi[sz]ed|mentored|tested|migrated|created|automated|debugged|refactored)"
 
+DEMO_ACTION_VERBS = re.compile(
+    r"\b(designed|built|implemented|re-architected|rearchitected|developed|deployed|"
+    r"reduced|improved|fixed|optimi[sz]ed|mentored|tested|migrated|created|automated|"
+    r"debugged|refactored|led|managed|onboarded|tuned|authored|maintained|architected|"
+    r"configured|monitored|investigated|profiled|owned|orchestrated|wrote|written|delivered|"
+    r"established|cut|spearheaded|drove|scaled)\b",
+    re.I
+)
+
+DEMO_INTRO_PASSIVE = re.compile(
+    r"\b(learned|intern|college project|simple|basic|seeking|learning|student|"
+    r"familiar with|elementary|coursework|academic project|minor project)\b",
+    re.I
+)
+
+DEMO_MEASURABLE_METRIC = re.compile(
+    r"(?:"
+    r"\b\d+(?:\.\d+)?\s*%\s*(?:reduction|increase|improvement|coverage|faster|latency|stability)?\b|"
+    r"\b\d[\d,]*\+?\s*(?:requests|req|qps|rps|users|concurrent|records|events|messages|tps)\s*(?:per\s*(?:sec|second|day|month)|/s)?\b|"
+    r"\b\d+(?:\.\d+)?\s*(?:ms|milliseconds|seconds)\s*(?:latency|response|faster)?\b|"
+    r"\b(?:team\s*of|led|managed|mentored)\s*(\d{1,2})\s*(?:engineers|developers|people|juniors|members)\b|"
+    r"\b\d{1,3}\+?\s*(?:rest\s+api\s+|api\s+)?(?:endpoints|microservices|services|apis|pipelines|modules)\b"
+    r")",
+    re.I
+)
+
+
+def _extract_genuine_metrics(text: str) -> List[str]:
+    hits = []
+    for m in DEMO_MEASURABLE_METRIC.finditer(text):
+        s = m.group(0).strip()
+        # Avoid treating calendar years or pure numbers like phone numbers as metrics
+        if not re.match(r"^(?:19|20)\d\d$", s) and not re.match(r"^\d{5,}$", s):
+            hits.append(s)
+    return hits
+
 
 def _kw_hits(text: str, keywords: List[str]) -> List[str]:
     low = text.lower()
@@ -23,35 +59,126 @@ def _units(text: str) -> List[str]:
     for line in re.split(r"[\r\n]+", text):
         for s in re.split(r"(?<=[.!?])\s+", line):
             s = s.strip(" \t-\u2022*")
-            if len(s) > 12:
+            if len(s) > 10:
                 out.append(s)
     return out
 
 
 # ------------------------------------------------------------------ recruitment
 def demo_resume_scores(job: dict, resume_text: str) -> dict:
+    from app.textutil import contains_quote
     units = _units(resume_text)
     scores = []
     for c in job["competencies"]:
+        cid = c["id"]
+        cname = c["name"]
         kws = c.get("keywords") or [c["name"]]
-        hit_units = [(len(set(_kw_hits(u, kws))), u) for u in units]
-        hit_units = [(n, u) for n, u in hit_units if n > 0]
-        distinct = set()
+
+        matching_units = []
+        all_hits = set()
+
         for u in units:
-            distinct.update(h.lower() for h in _kw_hits(u, kws))
-        if not hit_units:
-            scores.append({"competency_id": c["id"], "score": 0.0, "evidence": [],
-                           "justification": "No resume evidence found for this competency."})
+            hits = _kw_hits(u, kws)
+            if hits:
+                all_hits.update(h.lower() for h in hits)
+                has_action = bool(DEMO_ACTION_VERBS.search(u))
+                is_intro = bool(DEMO_INTRO_PASSIVE.search(u))
+                metrics = _extract_genuine_metrics(u)
+                matching_units.append({
+                    "unit": u,
+                    "hits": hits,
+                    "has_action": has_action,
+                    "is_intro": is_intro,
+                    "metrics": metrics,
+                })
+
+        if not matching_units:
+            scores.append({
+                "competency_id": cid,
+                "score": 0.0,
+                "evidence": [],
+                "evidence_level": "MISSING",
+                "justification": f"[Demo Heuristic - Missing Evidence] No relevant skills, projects, or responsibilities found in the resume for {cname}."
+            })
             continue
-        hit_units.sort(key=lambda x: (-x[0], -len(re.findall(r"\d", x[1]))))
-        evidence = [u[:220] for _, u in hit_units[:3]]
-        quantified = any(re.search(r"\d", e) for e in evidence)
-        s = min(10.0, 1.5 + 1.6 * len(distinct) + 0.8 * min(len(hit_units), 3) + (0.7 if quantified else 0))
-        scores.append({"competency_id": c["id"], "score": round(s, 1), "evidence": evidence,
-                       "justification": (f"Matched keywords {sorted(distinct)[:4]} in {len(hit_units)} resume line(s); "
-                                         f"{'quantified impact present' if quantified else 'no quantified impact'} "
-                                         "(demo keyword heuristic).")})
-    return {"scores": scores, "summary": "Demo-mode keyword scoring; not a semantic LLM judgement."}
+
+        # Sort matching units by relevance: direct action + metrics > direct action > intro > raw list
+        matching_units.sort(
+            key=lambda x: (
+                bool(x["metrics"]),
+                x["has_action"] and not x["is_intro"],
+                len(x["hits"]),
+                -len(x["unit"])
+            ),
+            reverse=True
+        )
+
+        has_direct_action = any(m["has_action"] and not m["is_intro"] for m in matching_units)
+        direct_metrics = [metric for m in matching_units if m["has_action"] and not m["is_intro"] for metric in m["metrics"]]
+        is_purely_intro_or_passive = not has_direct_action
+
+        evidence = [m["unit"][:220] for m in matching_units[:3]]
+        evidence = [e for e in evidence if contains_quote(resume_text, e)]
+        if not evidence and matching_units:
+            evidence = [matching_units[0]["unit"][:200]]
+
+        if is_purely_intro_or_passive:
+            # Partial evidence: mention in skills list or coursework/intern without production ownership
+            evidence_level = "PARTIAL"
+            any_intro = any(m["is_intro"] for m in matching_units)
+            if any_intro:
+                score = 3.5 + min(1.0, 0.3 * (len(all_hits) - 1))
+                score = min(4.5, score)
+                reason = f"Mentioned in introductory, coursework, or junior project context ({', '.join(sorted(all_hits)[:3])}) without demonstrated production responsibility or scale"
+            else:
+                score = 2.5 + min(0.8, 0.2 * (len(all_hits) - 1))
+                score = min(3.5, score)
+                reason = f"Referenced skills/tools ({', '.join(sorted(all_hits)[:3])}) without detailed project descriptions or measurable outcomes"
+
+            justification = (
+                f"[Demo Heuristic - Partial Evidence] {reason}. "
+                f"Evaluated against rubric level 1-2."
+            )
+        else:
+            # Direct evidence: demonstrated responsibilities
+            evidence_level = "DIRECT"
+            base_score = 6.0
+
+            action_count = sum(1 for m in matching_units if m["has_action"] and not m["is_intro"])
+            depth_bonus = min(1.0, 0.4 * min(action_count, 2) + 0.3 * min(len(all_hits), 3))
+
+            if direct_metrics:
+                metric_bonus = min(1.5, 0.8 + 0.3 * len(direct_metrics))
+                metric_str = f"verified measurable achievements ({', '.join(direct_metrics[:2])})"
+            else:
+                metric_bonus = 0.0
+                metric_str = "no quantified metrics reported"
+
+            score = base_score + depth_bonus + metric_bonus
+            # Realistic cap: never casual 10/10
+            score = min(9.0, max(5.5, score))
+
+            actions_found = set(DEMO_ACTION_VERBS.findall(" ".join(m["unit"] for m in matching_units if m["has_action"] and not m["is_intro"])))
+            act_summary = ", ".join(list(actions_found)[:3])
+
+            justification = (
+                f"[Demo Heuristic - Direct Evidence] Demonstrated active responsibilities ({act_summary}) applying "
+                f"{', '.join(sorted(all_hits)[:3])} across {len(matching_units)} resume section(s); {metric_str}. "
+                f"Score reflects solid working to advanced proficiency based on job rubric."
+            )
+
+        scores.append({
+            "competency_id": cid,
+            "score": round(score, 1),
+            "evidence": evidence,
+            "evidence_level": evidence_level,
+            "justification": justification
+        })
+
+    return {
+        "scores": scores,
+        "summary": "Demo heuristic scoring; distinguishes direct, partial, and missing evidence with responsibility and verified metrics checks. Not an AI semantic judgement."
+    }
 
 
 # ------------------------------------------------------------------ interviewer

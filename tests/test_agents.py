@@ -44,6 +44,41 @@ def test_strong_resume_outscores_weak_resume(settings, job_in):
     assert total("Aarav_Mehta.docx") > total("Rohan_Gupta.docx") > total("Karan_Shah.docx")
 
 
+def test_scoring_distinguishes_direct_partial_missing_evidence(settings, job_in):
+    ag = RecruitmentAgent(DemoLLM(), settings)
+    # Aarav: strong direct technical evidence
+    aarav_scores = {s.competency_id: s for s in ag.score_resume(job_in, resume_text("Aarav_Mehta.docx")).output.scores}
+    assert aarav_scores["python"].evidence_level == "DIRECT"
+    assert aarav_scores["databases"].evidence_level == "DIRECT"
+    assert aarav_scores["leadership"].evidence_level == "MISSING"
+    assert aarav_scores["leadership"].score == 0.0
+    assert aarav_scores["leadership"].evidence == []
+
+    # Karan: junior/intern with partial evidence
+    karan_scores = {s.competency_id: s for s in ag.score_resume(job_in, resume_text("Karan_Shah.docx")).output.scores}
+    assert karan_scores["python"].evidence_level == "PARTIAL"
+    assert karan_scores["testing"].evidence_level == "PARTIAL"
+    assert karan_scores["cloud_devops"].evidence_level == "MISSING"
+    assert karan_scores["cloud_devops"].score == 0.0
+
+
+def test_scores_are_realistic_and_no_casual_ten_out_of_ten(settings, job_in):
+    ag = RecruitmentAgent(DemoLLM(), settings)
+    r = ag.score_resume(job_in, resume_text("Aarav_Mehta.docx")).output
+    # No competency should be awarded 10.0 simply for matching keywords
+    for s in r.scores:
+        assert s.score < 10.0, f"Score for {s.competency_id} should not be 10.0"
+        assert s.justification != "", "Justification must not be empty"
+        # Justification must mention evidence level
+        assert any(lvl in s.justification for lvl in ["Direct Evidence", "Partial Evidence", "Missing Evidence"])
+
+    # Weak resume (Karan) must have low realistic scores for partial competencies
+    karan_out = ag.score_resume(job_in, resume_text("Karan_Shah.docx")).output
+    for s in karan_out.scores:
+        if s.evidence_level == "PARTIAL":
+            assert s.score <= 4.5, f"Partial competency {s.competency_id} scored too high: {s.score}"
+
+
 def test_llm_mode_retries_invalid_json_then_succeeds(settings, job_in):
     text = resume_text("Aarav_Mehta.docx")
     ev = "Wrote pytest unit tests and integration tests reaching 92% coverage; enforced in CI with GitHub Actions."

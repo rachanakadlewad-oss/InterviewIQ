@@ -45,6 +45,22 @@ def test_screening_ranks_and_proposes_shortlist(db, settings):
     assert len(res["proposed_shortlist"]) <= settings.shortlist_top_n
 
 
+def test_rescore_recalculates_candidate_rankings(db, settings):
+    job = make_job(db)
+    apps = [add_resume(db, job, f) for f in FILES]
+    sv = Supervisor(db, settings)
+    res1 = sv.screen_job(job.id)
+    assert len(res1["scored"]) == 6
+    # Rescore should recalculate scores and update ranking
+    res2 = sv.screen_job(job.id, rescore=True)
+    assert len(res2["scored"]) == 6
+    assert len(res2["ranking"]) == 6
+    # Ranks should be 1-based, sorted by total desc
+    ranks = [r["rank"] for r in res2["ranking"]]
+    assert ranks == sorted(ranks)
+    assert ranks[0] == 1
+
+
 def test_scoring_failure_marks_application_not_crash(db, settings):
     job = make_job(db)
     a = add_resume(db, job, "Aarav_Mehta.docx")
