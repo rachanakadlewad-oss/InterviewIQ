@@ -23,6 +23,20 @@ def test_health_and_config_label_demo_mode(client):
     assert client.get("/health").json() == {"status": "ok"}
     c = client.get("/config").json()
     assert c["demo_llm"] is True and c["identity_is_demo"] is True
+    # Verify accurate configuration keys are exposed
+    assert "llm_provider" in c
+    assert "weights" in c and "resume" in c["weights"] and "interview" in c["weights"]
+    assert "thresholds" in c and "advance_min" in c["thresholds"] and "review_min" in c["thresholds"]
+    assert "limits" in c and "max_questions" in c["limits"] and "max_followups" in c["limits"]
+    assert "shortlist" in c and "top_n" in c["shortlist"]
+    assert "identity_threshold" in c
+    assert "llm_connection_status" in c
+    # Verify secrets are NEVER exposed in config endpoint
+    assert "api_key" not in c
+    assert "llm_api_key" not in c
+    assert "secret" not in c
+    assert "database_url" not in c
+
 
 
 def test_bad_uploads_are_rejected_cleanly(client):

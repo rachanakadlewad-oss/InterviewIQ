@@ -77,11 +77,14 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
 
     @app.get("/config")
     def config():
+        llm_conn = "demo_mode" if s.is_demo_llm else ("available" if (s.llm_api_key or "localhost" in s.llm_base_url) else "missing_key")
         return {"llm_provider": s.llm_provider, "llm_model": s.llm_model or None, "demo_llm": s.is_demo_llm,
+                "llm_connection_status": llm_conn,
                 "identity_backend": s.identity_backend, "identity_is_demo": s.identity_backend == "demo",
                 "weights": {"resume": s.weight_resume, "interview": s.weight_interview},
                 "limits": {"max_questions": s.max_questions, "max_followups": s.max_followups_per_competency,
-                           "max_pivots": s.max_broad_pivots},
+                           "max_pivots": s.max_broad_pivots, "min_competencies": s.min_competencies_covered,
+                           "planned_competencies": s.planned_competencies},
                 "demo_identity_scenarios": idsvc.SCENARIOS,
                 # status flags only - secrets are never returned
                 "llm_configured": bool(s.llm_api_key) if not s.is_demo_llm else None,
