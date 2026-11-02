@@ -172,6 +172,21 @@ padding:.7rem .9rem;background:#0F1626;border-bottom:1px solid var(--border);whi
 .iq-cand-score small{font-size:.75rem;color:var(--muted);font-weight:400}
 .iq-sl-confirm-box{background:var(--card);border:1px solid rgba(22,119,255,.3);border-radius:var(--radius);padding:1.1rem 1.3rem;margin-top:1.2rem}
 
+/* ---------- identity review styles ---------- */
+.iq-id-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.1rem 1.3rem;margin-bottom:1rem;transition:border-color .15s}
+.iq-id-card:hover{border-color:rgba(22,119,255,.35)}
+.iq-id-card.inconclusive{border-left:4px solid var(--warning)}
+.iq-id-card.failed{border-left:4px solid var(--error)}
+.iq-id-card.pending{border-left:4px solid var(--info)}
+.iq-id-card.passed{border-left:4px solid var(--success)}
+.iq-id-top{display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;flex-wrap:wrap;margin-bottom:.6rem}
+.iq-id-evidence{background:rgba(22,119,255,.04);border:1px solid rgba(22,119,255,.18);border-radius:var(--radius-sm);padding:.75rem 1rem;margin:.6rem 0 .8rem}
+.iq-id-evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.6rem;font-size:.84rem}
+.iq-id-evidence-item{display:flex;flex-direction:column}
+.iq-id-evidence-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.iq-id-evidence-val{font-weight:600;color:var(--text);margin-top:.15rem}
+.iq-id-notice{font-size:.78rem;color:var(--warning);margin-top:.4rem;display:flex;align-items:center;gap:.35rem}
+
 /* ---------- native widgets ---------- */
 .stButton>button,.stDownloadButton>button,[data-testid="stFormSubmitButton"]>button{border-radius:var(--radius-sm);border:1px solid var(--border);
 background:var(--card);color:var(--text);font-weight:550;padding:.5rem 1rem;transition:background .15s,border-color .15s,transform .05s}

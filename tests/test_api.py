@@ -166,3 +166,57 @@ def test_calendar_generation_is_idempotent_and_keeps_bookings(client):
     assert client.post("/calendar/generate").json()["slots_added"] == 40
     assert client.post("/calendar/generate").json()["slots_added"] == 0
     assert len(client.get("/slots").json()) == 40
+
+
+def test_identity_candidates_endpoint_and_lifecycle(client):
+    job = client.post("/jobs/load-sample").json()
+    ids = [upload(client, job["id"], n).json()["application_id"] for n in ("Aarav_Mehta.docx", "Karan_Shah.docx")]
+    client.post(f"/jobs/{job['id']}/screen")
+    client.post(f"/jobs/{job['id']}/shortlist", json={"application_ids": ids})
+    sched = client.post(f"/jobs/{job['id']}/schedule").json()
+    assert len(sched) == 2
+
+    # 1. Initially, both candidates should appear in 'pending'
+    id_overview = client.get("/identity/candidates").json()
+    assert id_overview["threshold"] == 0.70
+    assert id_overview["is_demo"] is True
+    assert len(id_overview["pending"]) >= 2
+    assert len(id_overview["action_required"]) == 0
+
+    token1 = sched[0]["access_token"]
+    token2 = sched[1]["access_token"]
+
+    # 2. Candidate 1 executes successful identity check
+    client.post("/portal/identity-check", headers={"X-Access-Token": token1}, data={"scenario": "match"})
+
+    # 3. Candidate 2 executes failed identity check
+    client.post("/portal/identity-check", headers={"X-Access-Token": token2}, data={"scenario": "different_person"})
+
+    # Check overview categorization
+    overview2 = client.get("/identity/candidates").json()
+    assert any(c["application_id"] == sched[0]["application_id"] for c in overview2["passed"])
+    assert any(c["application_id"] == sched[1]["application_id"] for c in overview2["action_required"])
+
+    failed_cand = next(c for c in overview2["action_required"] if c["application_id"] == sched[1]["application_id"])
+    assert failed_cand["identity_status"] == "FAILED"
+    assert failed_cand["latest_check"]["face_count"] == 1
+    assert failed_cand["latest_check"]["confidence"] < 0.70
+    assert failed_cand["open_review"] is not None
+
+    # 4. Mandatory notes validation: empty notes should be rejected
+    rev_id = failed_cand["open_review"]["id"]
+    res_err = client.post(f"/reviews/{rev_id}/resolve", json={"resolution": "approve_manual_pass", "notes": ""})
+    assert res_err.status_code == 400 or res_err.status_code == 422 or "notes are required" in res_err.text
+
+    # 5. Recruiter resolves with mandatory notes
+    res_ok = client.post(f"/reviews/{rev_id}/resolve", json={"resolution": "approve_manual_pass", "notes": "Approved via manual passport verification"})
+    assert res_ok.status_code == 200
+
+    # 6. Check resolved tab in overview
+    overview3 = client.get("/identity/candidates").json()
+    assert any(c["application_id"] == sched[1]["application_id"] for c in overview3["passed"])
+    assert any(r["application_id"] == sched[1]["application_id"] for r in overview3["resolved"])
+    resolved_item = next(r for r in overview3["resolved"] if r["application_id"] == sched[1]["application_id"])
+    assert resolved_item["resolution"] == "approve_manual_pass"
+    assert "Approved via manual passport" in resolved_item["notes"]
+

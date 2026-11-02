@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app import db as dbm
 from app.config import Settings, get_settings, set_settings
-from app.db import Application, Job, ReviewItem, Slot, jdump, jload
+from app.db import Application, IdentityCheckRow, Job, ReviewItem, Slot, jdump, jload
 from app.logging_setup import setup_logging
 from app.schemas import JobIn, SessionState
 from app.services import identity as idsvc
@@ -216,11 +216,122 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
         out = []
         for r in db.execute(q).scalars():
             a = db.get(Application, r.application_id)
+            sl = db.execute(select(Slot).where(Slot.application_id == r.application_id)).scalar_one_or_none()
             out.append({"id": r.id, "application_id": r.application_id, "kind": r.kind, "reason": r.reason,
                         "status": r.status, "created_at": r.created_at.isoformat(), "candidate": a.candidate_name if a else "",
+                        "email": a.email if a else "", "application_status": a.status if a else "",
+                        "slot": ({"start": sl.start.isoformat(), "end": sl.end.isoformat(), "resource": sl.resource} if sl else None),
                         "job_title": titles.get(a.job_id, "") if a else "", "resolution": r.resolution, "notes": r.notes,
                         "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None})
         return out
+
+    @app.get("/identity/overview", dependencies=[Depends(recruiter)])
+    @app.get("/identity/candidates", dependencies=[Depends(recruiter)])
+    def identity_overview(db=Depends(get_db)):
+        jobs = {j.id: j.title for j in db.execute(select(Job)).scalars()}
+        slots = {}
+        for sl in db.execute(select(Slot)).scalars():
+            if sl.application_id:
+                slots[sl.application_id] = {
+                    "id": sl.id, "resource": sl.resource,
+                    "start": sl.start.isoformat(), "end": sl.end.isoformat()
+                }
+
+        apps = db.execute(select(Application).order_by(Application.id)).scalars().all()
+        checks = db.execute(select(IdentityCheckRow).order_by(IdentityCheckRow.timestamp.desc(), IdentityCheckRow.id.desc())).scalars().all()
+        checks_by_app = {}
+        for c in checks:
+            checks_by_app.setdefault(c.application_id, []).append({
+                "id": c.id, "timestamp": c.timestamp.isoformat(), "check_type": c.check_type,
+                "backend": c.backend, "face_count": c.face_count, "confidence": c.confidence,
+                "threshold": c.threshold, "passed": c.passed, "inconclusive": c.inconclusive,
+                "reason": c.reason, "human_override": c.human_override
+            })
+
+        reviews_list = db.execute(select(ReviewItem).order_by(ReviewItem.created_at.desc(), ReviewItem.id.desc())).scalars().all()
+        open_reviews_by_app = {}
+        resolved_reviews_by_app = {}
+        for r in reviews_list:
+            rev_dict = {
+                "id": r.id, "application_id": r.application_id, "kind": r.kind,
+                "reason": r.reason, "status": r.status, "created_at": r.created_at.isoformat(),
+                "resolution": r.resolution, "notes": r.notes,
+                "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None
+            }
+            if r.status == "OPEN":
+                open_reviews_by_app[r.application_id] = rev_dict
+            else:
+                resolved_reviews_by_app.setdefault(r.application_id, []).append(rev_dict)
+
+        action_required = []
+        pending = []
+        passed = []
+
+        for a in apps:
+            app_checks = checks_by_app.get(a.id, [])
+            latest_check = app_checks[0] if app_checks else None
+            open_rev = open_reviews_by_app.get(a.id)
+            slot_info = slots.get(a.id)
+
+            cand_data = {
+                "application_id": a.id,
+                "candidate_name": a.candidate_name or f"Application #{a.id}",
+                "email": a.email or "",
+                "job_title": jobs.get(a.job_id, ""),
+                "application_status": a.status,
+                "slot": slot_info,
+                "attempts": a.identity_attempts,
+                "latest_check": latest_check,
+                "all_checks": app_checks,
+                "open_review": open_rev,
+                "resolved_reviews": resolved_reviews_by_app.get(a.id, [])
+            }
+
+            if open_rev or a.status == "HUMAN_REVIEW":
+                if latest_check and latest_check.get("inconclusive"):
+                    cand_data["identity_status"] = "INCONCLUSIVE"
+                elif open_rev and "inconclusive" in open_rev.get("reason", "").lower():
+                    cand_data["identity_status"] = "INCONCLUSIVE"
+                else:
+                    cand_data["identity_status"] = "FAILED"
+                action_required.append(cand_data)
+            elif a.status == "SCHEDULED":
+                cand_data["identity_status"] = "PENDING"
+                pending.append(cand_data)
+            elif a.status in ("IDENTITY_PASSED", "INTERVIEW_IN_PROGRESS", "INTERVIEW_COMPLETE", "ASSESSED", "DECIDED") or (latest_check and latest_check.get("passed")):
+                cand_data["identity_status"] = "PASSED"
+                passed.append(cand_data)
+
+        resolved = []
+        for r in reviews_list:
+            if r.status == "RESOLVED":
+                a = db.get(Application, r.application_id)
+                app_checks = checks_by_app.get(r.application_id, [])
+                resolved.append({
+                    "id": r.id,
+                    "application_id": r.application_id,
+                    "candidate_name": a.candidate_name if a else f"Application #{r.application_id}",
+                    "email": a.email if a else "",
+                    "job_title": jobs.get(a.job_id, "") if a else "",
+                    "application_status": a.status if a else "",
+                    "kind": r.kind,
+                    "reason": r.reason,
+                    "resolution": r.resolution,
+                    "notes": r.notes,
+                    "created_at": r.created_at.isoformat(),
+                    "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+                    "all_checks": app_checks
+                })
+
+        return {
+            "threshold": s.identity_match_threshold,
+            "backend": s.identity_backend,
+            "is_demo": s.identity_backend == "demo",
+            "action_required": action_required,
+            "pending": pending,
+            "passed": passed,
+            "resolved": resolved
+        }
 
     class ResolveIn(BaseModel):
         resolution: str

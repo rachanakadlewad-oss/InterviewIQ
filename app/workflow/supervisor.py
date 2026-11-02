@@ -252,10 +252,18 @@ class Supervisor:
             if sess:
                 raise GateViolation("interview already started; use approve_manual_pass or reject")
             transition(a, "SCHEDULED")
+            retry_reason = f"retry authorized: {notes}" if notes.strip() else "retry authorized"
+            self.db.add(IdentityCheckRow(application_id=a.id, check_type="human_review", backend="human_reviewer",
+                                         passed=False, human_override=True, reason=retry_reason,
+                                         confidence=0.0, threshold=self.s.identity_match_threshold))
+            idsvc.append_identity_log(self.s, a.id, IdentityResult(
+                timestamp=idsvc._now(), check_type="human_review", backend="human_reviewer", passed=False,
+                reason=f"RETRY AUTHORIZED: {notes}" if notes.strip() else "RETRY AUTHORIZED",
+                threshold=self.s.identity_match_threshold, face_count=0, face_detected=False, single_face=False))
         elif resolution == "approve_manual_pass":
             self.db.add(IdentityCheckRow(application_id=a.id, check_type="human_review", backend="human_reviewer",
                                          passed=True, human_override=True, reason=f"manual pass: {notes}",
-                                         confidence=0.0, threshold=0.0))
+                                         confidence=0.0, threshold=self.s.identity_match_threshold))
             idsvc.append_identity_log(self.s, a.id, IdentityResult(
                 timestamp=idsvc._now(), check_type="human_review", backend="human_reviewer", passed=True,
                 reason=f"HUMAN OVERRIDE: {notes}", threshold=self.s.identity_match_threshold, face_count=1, face_detected=True, single_face=True))
@@ -270,6 +278,12 @@ class Supervisor:
             transition(a, "REJECTED_AT_REVIEW")
             idsvc.delete_photo(a.photo_path)
             a.photo_path = None
+            self.db.add(IdentityCheckRow(application_id=a.id, check_type="human_review", backend="human_reviewer",
+                                         passed=False, human_override=True, reason=f"manual rejection: {notes}",
+                                         confidence=0.0, threshold=self.s.identity_match_threshold))
+            idsvc.append_identity_log(self.s, a.id, IdentityResult(
+                timestamp=idsvc._now(), check_type="human_review", backend="human_reviewer", passed=False,
+                reason=f"HUMAN REJECT: {notes}", threshold=self.s.identity_match_threshold, face_count=0, face_detected=False, single_face=False))
         item.status, item.resolution, item.notes, item.resolved_at = "RESOLVED", resolution, notes, utcnow()
         self.db.commit()
         return {"application_id": a.id, "status": a.status}

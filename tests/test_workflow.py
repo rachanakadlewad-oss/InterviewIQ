@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app.db import Application, AssessmentRow, IdentityCheckRow, ReviewItem, Slot
-from app.services import reports, scheduler
+from app.services import identity as idsvc, reports, scheduler
 from app.services.state_machine import GateViolation
 from app.workflow.supervisor import Supervisor
 from tests.helpers import ANSWERS, FUTURE, FakeLLM, add_resume, make_job
@@ -330,3 +330,102 @@ def test_recruiter_shortlist_selection_confirmation_and_refresh_workflow(db, set
     res_sched = scheduler.schedule_shortlisted(db, settings, job, now=FUTURE)
     assert len(res_sched) == 2
     assert all(r["scheduled"] for r in res_sched)
+
+
+def test_identity_full_verification_gate_matrix(db, settings, tmp_path):
+    """Exhaustively verify:
+    1. Pending candidate cannot start interview (gate locked).
+    2. Failed check creates open review item and blocks interview start.
+    3. Inconclusive check creates open review item and blocks interview start.
+    4. Mandatory reasons required for manual pass and rejection.
+    5. Manual retry resets candidate to SCHEDULED with gate remaining locked until re-check passes.
+    6. Manual pass unlocks gate and allows interview to start.
+    7. Rejection permanently closes application, deletes photo, and locks gate.
+    8. Audit trail records decisions in IdentityCheckRow and identity_logs.
+    """
+    # 1. Pending candidate
+    sv, job, a = scheduled_candidate(db, settings)
+    assert a.status == "SCHEDULED"
+    assert not sv.identity_gate_open(a.id)
+    with pytest.raises(GateViolation):
+        sv.start_interview(a.id)
+
+    # 2. Failed check scenario (different_person: confidence below threshold)
+    res_fail = sv.verify_identity(a.id, b"", scenario="different_person")
+    assert not res_fail["passed"]
+    assert a.status == "HUMAN_REVIEW"
+    assert not sv.identity_gate_open(a.id)
+    with pytest.raises(GateViolation):
+        sv.start_interview(a.id)
+
+    item = db.execute(select(ReviewItem).where(ReviewItem.application_id == a.id, ReviewItem.status == "OPEN")).scalar_one()
+    assert item.kind == "IDENTITY"
+    assert "FAILED" in item.reason
+
+    # 3. Recruiter approves retry with mandatory note
+    sv.resolve_review(item.id, "approve_retry", "Candidate reported poor web camera lighting; retry authorized")
+    assert a.status == "SCHEDULED"
+    # Even after retry authorization, gate must remain LOCKED until check passes
+    assert not sv.identity_gate_open(a.id)
+    with pytest.raises(GateViolation):
+        sv.start_interview(a.id)
+
+    # 4. Inconclusive check scenario (unknown scenario or error)
+    res_inconcl = sv.verify_identity(a.id, b"", scenario="bogus_scenario")
+    assert not res_inconcl["passed"]
+    assert res_inconcl["identity"]["inconclusive"]
+    assert a.status == "HUMAN_REVIEW"
+    assert not sv.identity_gate_open(a.id)
+
+    item2 = db.execute(select(ReviewItem).where(ReviewItem.application_id == a.id, ReviewItem.status == "OPEN")).scalar_one()
+    assert "INCONCLUSIVE" in item2.reason
+
+    # 5. Mandatory notes enforcement on approve_manual_pass
+    with pytest.raises(ValueError):
+        sv.resolve_review(item2.id, "approve_manual_pass", "")
+    with pytest.raises(ValueError):
+        sv.resolve_review(item2.id, "approve_manual_pass", "   ")
+
+    # 6. Manual pass with valid note
+    sv.resolve_review(item2.id, "approve_manual_pass", "Identity verified via direct video call with passport")
+    assert a.status == "IDENTITY_PASSED"
+    assert sv.identity_gate_open(a.id)
+
+    # Interview can now start cleanly
+    start_res = sv.start_interview(a.id)
+    assert start_res["question"]
+    assert a.status == "INTERVIEW_IN_PROGRESS"
+
+    # 7. Audit trail check: verify IdentityCheckRow and identity_log entries
+    check_rows = db.execute(select(IdentityCheckRow).where(IdentityCheckRow.application_id == a.id)
+                            .order_by(IdentityCheckRow.id)).scalars().all()
+    # Checks: 1 (failed) + 1 (retry row) + 1 (inconclusive) + 1 (manual pass row) = 4
+    assert len(check_rows) >= 4
+    assert any(c.human_override and c.passed and "manual pass" in c.reason for c in check_rows)
+    assert any(c.human_override and not c.passed and "retry authorized" in c.reason for c in check_rows)
+
+    id_log = idsvc.read_identity_log(settings, a.id)
+    assert len(id_log) >= 4
+    assert any("HUMAN OVERRIDE" in e.get("reason", "") for e in id_log)
+
+    # 8. Rejection scenario with another candidate
+    sv2, job2, a2 = scheduled_candidate(db, settings)
+    ref_photo = tmp_path / "cand2.img"
+    ref_photo.write_bytes(b"photo_data")
+    a2.photo_path = str(ref_photo)
+    db.commit()
+
+    sv2.verify_identity(a2.id, b"", scenario="multiple_faces")
+    item_rej = db.execute(select(ReviewItem).where(ReviewItem.application_id == a2.id, ReviewItem.status == "OPEN")).scalar_one()
+
+    # Empty notes rejected
+    with pytest.raises(ValueError):
+        sv2.resolve_review(item_rej.id, "reject", "")
+
+    sv2.resolve_review(item_rej.id, "reject", "Multiple unauthorized persons present in frame; candidate rejected")
+    assert a2.status == "REJECTED_AT_REVIEW"
+    assert not ref_photo.exists()
+    assert not sv2.identity_gate_open(a2.id)
+    with pytest.raises(GateViolation):
+        sv2.start_interview(a2.id)
+
