@@ -193,11 +193,12 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
 
     @app.get("/slots", dependencies=[Depends(recruiter)])
     def slots(db=Depends(get_db)):
+        scheduler.deduplicate_slots(db)
         apps = {a.id: a for a in db.execute(select(Application)).scalars()}
         titles = {j.id: j.title for j in db.execute(select(Job)).scalars()}
         conf_dir = s.subdir("confirmations")
         out = []
-        for x in db.execute(select(Slot).order_by(Slot.start)).scalars():
+        for x in db.execute(select(Slot).order_by(Slot.start, Slot.resource, Slot.id)).scalars():
             a = apps.get(x.application_id)
             out.append({"id": x.id, "resource": x.resource, "start": x.start.isoformat(), "end": x.end.isoformat(),
                         "application_id": x.application_id, "candidate": a.candidate_name if a else None,

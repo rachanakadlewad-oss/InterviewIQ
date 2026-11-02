@@ -28,14 +28,55 @@ def load_calendar(db, path, now: Optional[datetime] = None) -> int:
     data = json.loads(Path(path).read_text())
     added = 0
     for s in data["slots"]:
-        if now and datetime.fromisoformat(s["end"]) < now:
+        st = datetime.fromisoformat(s["start"])
+        en = datetime.fromisoformat(s["end"])
+        res = s.get("resource", "AI-Room-1")
+        sid = s["slot_id"]
+        if now and en < now:
             continue
-        if db.get(Slot, s["slot_id"]) is None:
-            db.add(Slot(id=s["slot_id"], resource=s.get("resource", "AI-Room-1"),
-                        start=datetime.fromisoformat(s["start"]), end=datetime.fromisoformat(s["end"])))
-            added += 1
+        if db.get(Slot, sid) is not None:
+            continue
+        # Avoid creating overlapping slots for the same room
+        overlap = db.execute(
+            select(Slot).where(
+                Slot.resource == res,
+                Slot.start < en,
+                Slot.end > st
+            )
+        ).scalars().first()
+        if overlap is not None:
+            continue
+        db.add(Slot(id=sid, resource=res, start=st, end=en))
+        added += 1
     db.commit()
     return added
+
+
+def deduplicate_slots(db) -> int:
+    """Removes unbooked duplicate or overlapping slots on the same resource, preserving all booked slots."""
+    slots = db.execute(select(Slot).order_by(Slot.start, Slot.id)).scalars().all()
+    removed = 0
+    kept_by_resource = {}
+    for s in slots:
+        res = s.resource
+        existing = kept_by_resource.setdefault(res, [])
+        overlapping = [k for k in existing if overlaps(s.start, s.end, k.start, k.end)]
+        if overlapping:
+            if s.application_id is None:
+                # s is unbooked and overlaps with an existing slot -> remove s
+                db.delete(s)
+                removed += 1
+                continue
+            else:
+                # s is booked; remove any overlapping unbooked slots previously kept
+                for uk in [k for k in overlapping if k.application_id is None]:
+                    existing.remove(uk)
+                    db.delete(uk)
+                    removed += 1
+        existing.append(s)
+    if removed > 0:
+        db.commit()
+    return removed
 
 
 def generate_slots(db, now: Optional[datetime] = None, working_days: int = 5, resources=("AI-Room-1", "AI-Room-2"),
@@ -50,10 +91,22 @@ def generate_slots(db, now: Optional[datetime] = None, working_days: int = 5, re
             for res in resources:
                 for h in hours:
                     sid = f"G{day:%Y%m%d}-{res.rsplit('-', 1)[-1]}-{h:02d}"
-                    if db.get(Slot, sid) is None:
-                        start = day.replace(hour=h)
-                        db.add(Slot(id=sid, resource=res, start=start, end=start + timedelta(minutes=minutes)))
-                        added += 1
+                    start = day.replace(hour=h)
+                    end = start + timedelta(minutes=minutes)
+                    if db.get(Slot, sid) is not None:
+                        continue
+                    # Never duplicate an existing or overlapping slot for the same room
+                    overlap = db.execute(
+                        select(Slot).where(
+                            Slot.resource == res,
+                            Slot.start < end,
+                            Slot.end > start
+                        )
+                    ).scalars().first()
+                    if overlap is not None:
+                        continue
+                    db.add(Slot(id=sid, resource=res, start=start, end=end))
+                    added += 1
             produced += 1
         day += timedelta(days=1)
     db.commit()
@@ -61,16 +114,43 @@ def generate_slots(db, now: Optional[datetime] = None, working_days: int = 5, re
 
 
 def book_slot(db, slot_id: str, application_id: int) -> bool:
-    """Atomic compare-and-set. Returns False if the slot is gone or the application already holds a slot."""
+    """Atomic compare-and-set with room overlap prevention and candidate uniqueness validation."""
+    # 1. Candidate cannot hold more than one slot
+    existing = slot_of(db, application_id)
+    if existing is not None:
+        return existing.id == slot_id
+
+    # 2. Target slot must exist and be free
+    target = db.get(Slot, slot_id)
+    if target is None or target.application_id is not None:
+        return False
+
+    # 3. No other booked slot on the same room can overlap in time
+    overlap = db.execute(
+        select(Slot).where(
+            Slot.resource == target.resource,
+            Slot.application_id.is_not(None),
+            Slot.id != target.id,
+            Slot.start < target.end,
+            Slot.end > target.start
+        )
+    ).scalars().first()
+    if overlap is not None:
+        return False
+
+    # 4. Atomic compare-and-set
     try:
-        res = db.execute(update(Slot).where(Slot.id == slot_id, Slot.application_id.is_(None))
-                         .values(application_id=application_id))
+        res = db.execute(
+            update(Slot)
+            .where(Slot.id == slot_id, Slot.application_id.is_(None))
+            .values(application_id=application_id)
+        )
         if res.rowcount != 1:
             db.rollback()
             return False
         db.commit()
         return True
-    except IntegrityError:          # UNIQUE(application_id): application already has a slot
+    except IntegrityError:
         db.rollback()
         return False
 
@@ -96,7 +176,7 @@ def assign_slot(db, application_id: int, now: Optional[datetime] = None, max_tri
             return None
         if book_slot(db, s.id, application_id):
             return s
-        log.info("slot %s was taken concurrently; retrying", s.id)
+        log.info("slot %s was taken concurrently or rejected; retrying", s.id)
     return None
 
 
@@ -117,18 +197,32 @@ def write_confirmation(settings, app: Application, job: Job, slot: Slot) -> dict
 
 
 def schedule_shortlisted(db, settings, job: Job, now: Optional[datetime] = None) -> List[dict]:
+    deduplicate_slots(db)
     apps = db.execute(select(Application).where(Application.job_id == job.id, Application.shortlisted.is_(True))
                       .order_by(Application.rank, Application.id)).scalars().all()
     out = []
     for a in apps:
         if a.status not in ("SHORTLISTED", "SCHEDULED"):
             continue
+        was_already_scheduled = (a.status == "SCHEDULED")
         s = assign_slot(db, a.id, now)
+        cand_name = a.candidate_name or f"Candidate #{a.id}"
         if s is None:
-            out.append({"application_id": a.id, "scheduled": False, "reason": "no free slot available"})
+            out.append({
+                "application_id": a.id,
+                "candidate": cand_name,
+                "scheduled": False,
+                "reason": "no free slot available"
+            })
             continue
         if a.status == "SHORTLISTED":
             transition(a, "SCHEDULED")
             db.commit()
-        out.append({"application_id": a.id, "scheduled": True, **write_confirmation(settings, a, job, s)})
+        out.append({
+            "application_id": a.id,
+            "candidate": cand_name,
+            "scheduled": True,
+            "already_scheduled": was_already_scheduled,
+            **write_confirmation(settings, a, job, s)
+        })
     return out
