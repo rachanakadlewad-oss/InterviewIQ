@@ -70,3 +70,75 @@ def test_trace_shows_readable_competency_names():
          {"turn": 2, "decision": "NEXT_COMPETENCY", "competency": "api_design", "trigger_phrase": "x", "reasoning": "y", "question_asked": "q?", "source": "llm"}]
     h = C.trace_html(t, {"api_design": "REST API Design"})
     assert "Incident Response" in h and "REST API Design" in h and "extra_" not in h and "api_design" not in h
+
+
+def test_competency_evidence_html_renders_all_requested_sections():
+    info = {
+        "name": "System Design",
+        "description": "Architecting scalable systems",
+        "weight": 1.5,
+        "score": 6.2,
+        "level_label": "Partial evidence",
+        "level_tone": "warning",
+        "evidence": ["Built distributed microservices in Go handling 2,000 requests/sec."],
+        "relevance_explanation": "Demonstrates practical API microservices experience but lacks multi-region failover.",
+        "demonstrated_points": ["Referenced microservices and Go.", "Verified throughput: 2,000 requests/sec."],
+        "missing_points": ["No multi-region architecture or disaster recovery verified."],
+        "suggested_questions": [
+            {"tag": "Primary Domain Question", "question": "Walk me through how you designed the distributed services."},
+            {"tag": "Targeted Production Probe", "question": "How did you handle service discovery and network partitions?"}
+        ]
+    }
+    html = C.competency_evidence_html(info)
+
+    # 1. Competency name & score out of 10
+    assert "System Design" in html
+    assert "6.2" in html
+    assert "/ 10" in html
+
+    # 2. Competency weight
+    assert "Weight 1.5x" in html
+
+    # 3. Evidence found in the resume
+    assert "Built distributed microservices in Go" in html
+
+    # 4. Explanation of why evidence is relevant
+    assert "Demonstrates practical API microservices experience" in html
+
+    # 5. Whether evidence is strong, partial or missing
+    assert "Partial evidence" in html
+
+    # 6. Skills or experience that are not demonstrated
+    assert "Demonstrated in Resume" in html
+    assert "Not Demonstrated / Gaps to Probe" in html
+    assert "No multi-region architecture" in html
+
+    # 7. Suggested interview questions
+    assert "Suggested Interview Validation Probes" in html
+    assert "Walk me through how you designed the distributed services." in html
+    assert "service discovery and network partitions" in html
+
+
+def test_competency_evidence_html_handles_missing_evidence():
+    info = {
+        "name": "Kubernetes & Cloud",
+        "description": "Cluster management",
+        "weight": 1.0,
+        "score": 0.0,
+        "level_label": "Missing evidence",
+        "level_tone": "neutral",
+        "evidence": [],
+        "relevance_explanation": "No relevant evidence was identified in the resume text for Kubernetes & Cloud.",
+        "demonstrated_points": ["No relevant skills, projects, or responsibilities cited in resume."],
+        "missing_points": ["Missing core domain technologies: k8s, helm, terraform."],
+        "suggested_questions": [
+            {"tag": "Primary Domain Question", "question": "Have you worked with Kubernetes in any role?"}
+        ]
+    }
+    html = C.competency_evidence_html(info)
+    assert "Kubernetes &amp; Cloud" in html
+    assert "0.0" in html
+    assert "Missing evidence" in html
+    assert "No direct mentions, responsibilities, or projects related to this competency were identified" in html
+    assert "No relevant evidence was identified in the resume text" in html
+    assert "Have you worked with Kubernetes in any role?" in html

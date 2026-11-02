@@ -67,3 +67,83 @@ def test_form_output_passes_backend_schema():
     clean, errors = h.competency_rows_valid([{"name": "Testing", "weight": 2}, {"name": "APIs"}])
     assert not errors
     JobIn.model_validate({"title": "Engineer", "description": "d", "competencies": clean})
+
+
+def test_analyze_competency_details_strong_evidence():
+    comp = {
+        "id": "system_design",
+        "name": "System Design",
+        "weight": 2.0,
+        "description": "Architecting resilient distributed systems",
+        "keywords": ["distributed systems", "microservices", "kubernetes", "kafka"],
+        "rubric": {"1": "No experience", "3": "Builds basic APIs", "5": "Designs multi-region systems"},
+        "questions": ["How do you ensure high availability in distributed architectures?"]
+    }
+    score_data = {
+        "competency_id": "system_design",
+        "score": 8.0,
+        "evidence_level": "DIRECT",
+        "justification": "Direct Evidence: Designed distributed systems handling 50k requests per second using microservices and kafka.",
+        "evidence": ["Architected distributed systems handling 50k requests per second across 12 microservices."]
+    }
+    info = h.analyze_competency_details(comp, score_data)
+    assert info["name"] == "System Design"
+    assert info["score"] == 8.0
+    assert info["weight"] == 2.0
+    assert info["level_label"] == "Strong evidence"
+    assert info["level_tone"] == "success"
+    assert len(info["evidence"]) == 1
+    assert "Architected distributed systems" in info["evidence"][0]
+    assert any("microservices" in p or "distributed systems" in p for p in info["demonstrated_points"])
+    assert any("50k requests" in p for p in info["demonstrated_points"])
+    assert any("Designs multi-region systems" in p for p in info["missing_points"])
+    assert len(info["suggested_questions"]) == 2
+    assert "high availability" in info["suggested_questions"][0]["question"]
+
+
+def test_analyze_competency_details_partial_evidence():
+    comp = {
+        "id": "system_design",
+        "name": "System Design",
+        "weight": 1.5,
+        "description": "Architecting resilient distributed systems",
+        "keywords": ["kubernetes", "kafka", "redis", "load balancer"],
+        "rubric": {"3": "Working standard", "5": "Advanced architecture"},
+        "questions": []
+    }
+    score_data = {
+        "competency_id": "system_design",
+        "score": 5.2,
+        "evidence_level": "PARTIAL",
+        "justification": "Partial Evidence: Candidate mentioned kubernetes in coursework but lacked production scale.",
+        "evidence": ["Completed academic project deploying containers with Kubernetes."]
+    }
+    info = h.analyze_competency_details(comp, score_data)
+    assert info["level_label"] == "Partial evidence"
+    assert info["level_tone"] == "warning"
+    assert info["score"] == 5.2
+    assert any("kubernetes" in p for p in info["demonstrated_points"])
+    assert any("Unrepresented production tools" in p for p in info["missing_points"])
+    assert any("No quantified scale" in p for p in info["missing_points"])
+    assert any("Production Depth Probe" in q["tag"] for q in info["suggested_questions"])
+
+
+def test_analyze_competency_details_missing_evidence():
+    comp = {
+        "id": "cloud_infra",
+        "name": "Cloud Infrastructure",
+        "weight": 1.0,
+        "description": "Managing AWS and Terraform infrastructure",
+        "keywords": ["aws", "terraform", "ci/cd"],
+        "rubric": {"3": "Provisions cloud resources", "5": "Zero-downtime infrastructure"},
+        "questions": ["Describe your cloud architecture workflow."]
+    }
+    info = h.analyze_competency_details(comp, None)
+    assert info["score"] == 0.0
+    assert info["level_label"] == "Missing evidence"
+    assert info["level_tone"] == "neutral"
+    assert info["evidence"] == []
+    assert "No relevant evidence was identified" in info["relevance_explanation"]
+    assert "aws" in info["relevance_explanation"]
+    assert any("Missing core domain technologies" in p for p in info["missing_points"])
+    assert any("Gap Exploration Probe" in q["tag"] for q in info["suggested_questions"])

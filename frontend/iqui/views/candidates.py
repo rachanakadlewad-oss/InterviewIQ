@@ -152,29 +152,6 @@ def detail_view(app_id, job, row):
                       "Scores are evaluated by the Recruitment Agent LLM against the competency rubric with verbatim evidence verification.")
         for c in job["competencies"]:
             s = scores.get(c["id"])
-            if not s:
-                continue
-            ev_level = s.get("evidence_level")
-            if not ev_level:
-                if "Direct Evidence" in s.get("justification", ""):
-                    ev_level = "DIRECT"
-                elif "Partial Evidence" in s.get("justification", ""):
-                    ev_level = "PARTIAL"
-                elif "Missing Evidence" in s.get("justification", ""):
-                    ev_level = "MISSING"
-
-            lvl_badge = (
-                C.badge("Direct evidence", "success", dot=True) if ev_level == "DIRECT"
-                else C.badge("Partial evidence", "warning", dot=True) if ev_level == "PARTIAL"
-                else C.badge("Missing evidence", "neutral", dot=True)
-            )
-
-            with st.expander(f"{c['name']}  -  {s['score']:.1f} / 10", expanded=False):
-                C.badges(C.badge(f"weight {c['weight']}", "neutral", dot=False), lvl_badge)
-                st.markdown(s["justification"])
-                if s["evidence"]:
-                    st.caption("Verbatim resume evidence:")
-                    for e in s["evidence"]:
-                        C.quote(e)
-                else:
-                    C.callout("neutral", "No resume evidence found for this competency", "No relevant experience, skills, or projects found. It may be probed in the interview.")
+            analysis = H.analyze_competency_details(c, s)
+            with st.expander(f"{c['name']}   ·   {analysis['score']:.1f} / 10   [{analysis['level_label']}]", expanded=False):
+                C.competency_evidence_card(c, s)

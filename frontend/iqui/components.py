@@ -202,3 +202,59 @@ def question_card(label: str, text: str):
 
 def badges(*bs):
     _emit('<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .8rem">' + "".join(bs) + "</div>")
+
+
+def competency_evidence_html(info: dict) -> str:
+    weight_pill = f'<span class="iq-badge neutral">Weight {info["weight"]:.1f}x</span>'
+    lvl_badge = badge(info["level_label"], info["level_tone"], dot=True)
+    score_pill = f'<div class="iq-comp-score" style="font-weight:700;font-size:1.15rem;color:var(--text)">{info["score"]:.1f} <small style="font-size:0.75rem;color:var(--muted)">/ 10</small></div>'
+    pct = max(0.0, min(100.0, info["score"] / 10.0 * 100))
+    bar_html = f'<div class="iq-bar" style="min-width:130px"><div class="track"><div class="fill {info["level_tone"]}" style="width:{pct:.0f}%"></div></div><span>{info["score"]:.1f}</span></div>'
+
+    desc_html = f'<div class="iq-comp-desc">{esc(info["description"])}</div>' if info.get("description") else ""
+    top = (f'<div class="iq-comp-top">'
+           f'<div style="flex:1"><div class="iq-comp-title">{esc(info["name"])}</div>{desc_html}</div>'
+           f'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.35rem">'
+           f'<div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">{weight_pill}{lvl_badge}{score_pill}</div>'
+           f'{bar_html}</div></div>')
+
+    # 1. Verbatim Evidence
+    ev_body = ""
+    if info["evidence"]:
+        for e in info["evidence"]:
+            ev_body += f'<div class="iq-ev-card">"{esc(e)}"</div>'
+    else:
+        ev_body = f'<div class="iq-ev-empty">No direct mentions, responsibilities, or projects related to this competency were identified in the resume text.</div>'
+    sec_evidence = f'<div class="iq-card-title accent">📄 Verbatim Resume Evidence</div>{ev_body}'
+
+    # 2. Relevance & Scoring Rationale
+    sec_rationale = (f'<div class="iq-card-title accent">🔍 Relevance & Score Rationale</div>'
+                     f'<div class="iq-rationale-box">{esc(info["relevance_explanation"])}</div>')
+
+    # 3. Gap Analysis (Demonstrated vs Not Demonstrated)
+    dem_items = "".join(f'<li class="iq-gap-item"><i>✓</i><span>{esc(p)}</span></li>' for p in info["demonstrated_points"])
+    mis_items = "".join(f'<li class="iq-gap-item"><i>✗</i><span>{esc(p)}</span></li>' for p in info["missing_points"])
+    sec_gap = (f'<div class="iq-card-title accent">⚖️ Demonstrated vs. Not Demonstrated</div>'
+               f'<div class="iq-gap-grid">'
+               f'<div class="iq-gap-col demonstrated"><div style="font-weight:600;font-size:0.82rem;color:var(--success);margin-bottom:0.5rem">✅ Demonstrated in Resume</div><ul class="iq-gap-list">{dem_items}</ul></div>'
+               f'<div class="iq-gap-col missing"><div style="font-weight:600;font-size:0.82rem;color:var(--warning);margin-bottom:0.5rem">⚠️ Not Demonstrated / Gaps to Probe</div><ul class="iq-gap-list">{mis_items}</ul></div>'
+               f'</div>')
+
+    # 4. Suggested Interview Probes
+    q_items = ""
+    for q in info["suggested_questions"]:
+        q_items += (f'<div class="iq-probe-item">'
+                    f'<div class="iq-probe-tag">{esc(q["tag"])}</div>'
+                    f'<div class="iq-probe-q">"{esc(q["question"])}"</div>'
+                    f'</div>')
+    sec_probes = (f'<div class="iq-card-title accent">💡 Suggested Interview Validation Probes</div>'
+                  f'<div class="iq-probe-box">'
+                  f'<div style="font-size:0.78rem;color:var(--muted);margin-bottom:0.5rem">Use these tailored questions in the interview to validate candidate depth:</div>'
+                  f'{q_items}</div>')
+
+    return f'<div class="iq-comp-box">{top}{sec_evidence}{sec_rationale}{sec_gap}{sec_probes}</div>'
+
+
+def competency_evidence_card(comp: dict, score_data: Optional[dict] = None):
+    info = H.analyze_competency_details(comp, score_data)
+    _emit(competency_evidence_html(info))

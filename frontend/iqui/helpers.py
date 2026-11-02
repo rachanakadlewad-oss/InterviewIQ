@@ -129,3 +129,146 @@ def competency_rows_valid(rows: list) -> Tuple[list, List[str]]:
     if not clean and not errors:
         errors.append("Add at least one competency.")
     return clean, errors
+
+
+def analyze_competency_details(comp: dict, score_data: Optional[dict]) -> dict:
+    import re
+    cid = comp.get("id", "")
+    name = comp.get("name", cid.replace("_", " ").title())
+    description = comp.get("description", "")
+    weight = float(comp.get("weight", 1.0))
+    rubric = comp.get("rubric", {})
+    keywords = comp.get("keywords", [])
+    questions = comp.get("questions", [])
+
+    score = float(score_data.get("score", 0.0)) if score_data else 0.0
+    evidence = list(score_data.get("evidence", [])) if score_data else []
+    justification = str(score_data.get("justification", "")) if score_data else ""
+    evidence_level = (score_data.get("evidence_level") if score_data else None)
+
+    # Infer evidence level if missing
+    if not evidence_level:
+        if "Direct Evidence" in justification or score >= 6.5:
+            evidence_level = "DIRECT"
+        elif "Partial Evidence" in justification or (0 < score < 6.5):
+            evidence_level = "PARTIAL"
+        else:
+            evidence_level = "MISSING"
+
+    # Status label & tone
+    if evidence_level == "DIRECT" or score >= 6.5:
+        level_label = "Strong evidence"
+        level_tone = "success"
+    elif evidence_level == "PARTIAL" or score > 0:
+        level_label = "Partial evidence"
+        level_tone = "warning"
+    else:
+        level_label = "Missing evidence"
+        level_tone = "neutral"
+
+    # Clean explanation
+    clean_just = re.sub(r"^\[Demo Heuristic - [^\]]+\]\s*", "", justification).strip()
+    if evidence_level == "MISSING" or score == 0.0:
+        relevance_explanation = (
+            f"No relevant evidence was identified in the resume text for {name}. "
+            f"The candidate did not mention expected core concepts ({', '.join(keywords[:4]) if keywords else name}). "
+            f"This represents an unverified area that should be explored directly during the interview."
+        )
+    else:
+        if description and description.lower() not in clean_just.lower():
+            relevance_explanation = f"{clean_just} (Evaluated against requirement: {description})"
+        else:
+            relevance_explanation = clean_just
+
+    # Demonstrated items
+    demonstrated_points = []
+    if evidence_level == "MISSING" or score == 0.0:
+        demonstrated_points.append("No relevant skills, projects, or responsibilities cited in resume.")
+    else:
+        evidence_text = (justification + " " + " ".join(evidence)).lower()
+        hits = [k for k in keywords if re.search(r"\b" + re.escape(k.lower()), evidence_text)]
+        if hits:
+            demonstrated_points.append(f"Referenced technologies/concepts: {', '.join(hits[:5])}.")
+        if evidence_level == "DIRECT":
+            demonstrated_points.append("Demonstrated professional ownership and active implementation.")
+            metrics = re.findall(
+                r"\b(?:\d+(?:\.\d+)?\s*%|\d[\d,]*(?:[kKmMbB])?\+?\s*(?:requests|req|qps|rps|users|concurrent)|\d+\s*(?:ms|seconds)|team\s*of\s*\d+|\d+\s*endpoints)\b",
+                justification + " " + " ".join(evidence),
+                re.I
+            )
+            if metrics:
+                demonstrated_points.append(f"Verified measurable achievements: {', '.join(metrics[:2])}.")
+            if rubric.get("3"):
+                demonstrated_points.append(f"Working proficiency: {rubric['3']}")
+        else:
+            demonstrated_points.append("Introductory, academic, or junior task exposure without production scale.")
+
+    # Missing / gap items
+    missing_points = []
+    evidence_text = (justification + " " + " ".join(evidence)).lower()
+    if evidence_level == "MISSING" or score == 0.0:
+        if keywords:
+            missing_points.append(f"Missing core domain technologies: {', '.join(keywords[:5])}.")
+        if rubric.get("3"):
+            missing_points.append(f"Working competency requirement: {rubric['3']}")
+        if rubric.get("5"):
+            missing_points.append(f"Advanced design expectation: {rubric['5']}")
+        missing_points.append("No active or passive experience demonstrated on paper.")
+    elif evidence_level == "PARTIAL":
+        unhit = [k for k in keywords if not re.search(r"\b" + re.escape(k.lower()), evidence_text)]
+        if unhit:
+            missing_points.append(f"Unrepresented production tools: {', '.join(unhit[:4])}.")
+        if rubric.get("3"):
+            missing_points.append(f"Working standard: {rubric['3']}")
+        if rubric.get("5"):
+            missing_points.append(f"Advanced architecture: {rubric['5']}")
+        missing_points.append("No quantified scale, latency, or throughput metrics reported.")
+    else:
+        if rubric.get("5"):
+            missing_points.append(f"Advanced depth to verify: {rubric['5']}")
+        missing_points.append("Failure modes & trade-offs: Resume verifies delivery; probe how edge cases and outages were handled.")
+
+    # Suggested interview validation questions
+    suggested_questions = []
+    if questions:
+        suggested_questions.append({
+            "tag": "Primary Domain Question",
+            "question": questions[0]
+        })
+    else:
+        suggested_questions.append({
+            "tag": "Primary Domain Question",
+            "question": f"Can you walk me through your experience with {name} and describe a project where you applied it?"
+        })
+
+    if evidence_level == "MISSING":
+        suggested_questions.append({
+            "tag": "Gap Exploration Probe",
+            "question": f"Your resume focuses on other areas and does not highlight {name}. Have you worked with {name} (or tools like {', '.join(keywords[:3]) if keywords else 'related technologies'}) in unlisted projects or prior roles?"
+        })
+    elif evidence_level == "PARTIAL":
+        suggested_questions.append({
+            "tag": "Production Depth Probe",
+            "question": f"You mentioned {name} in a project context. What were the specific scale constraints, and what would you do differently to make it production-ready?"
+        })
+    else:
+        suggested_questions.append({
+            "tag": "Trade-offs & Resilience Probe",
+            "question": f"In your implementation of {name}, what critical architectural trade-offs did you make, and how did you measure success?"
+        })
+
+    return {
+        "cid": cid,
+        "name": name,
+        "description": description,
+        "weight": weight,
+        "score": score,
+        "evidence": evidence,
+        "evidence_level": evidence_level,
+        "level_label": level_label,
+        "level_tone": level_tone,
+        "relevance_explanation": relevance_explanation,
+        "demonstrated_points": demonstrated_points,
+        "missing_points": missing_points,
+        "suggested_questions": suggested_questions,
+    }

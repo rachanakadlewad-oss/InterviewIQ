@@ -126,6 +126,34 @@ padding:.7rem .9rem;background:#0F1626;border-bottom:1px solid var(--border);whi
 .iq-question .l{font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;color:var(--primary-hover);font-weight:600}
 .iq-question .q{font-size:1.15rem;color:var(--text);margin-top:.35rem;line-height:1.5}
 
+/* ---------- competency evidence presentation ---------- */
+.iq-comp-box{border:1px solid var(--border);background:var(--panel);border-radius:var(--radius);padding:1.1rem 1.25rem;margin:.4rem 0 .9rem;transition:border-color .15s}
+.iq-comp-box:hover{border-color:rgba(22,119,255,.35)}
+.iq-comp-top{display:flex;justify-content:space-between;align-items:flex-start;gap:.8rem;margin-bottom:.5rem;flex-wrap:wrap}
+.iq-comp-title{font-size:1.08rem;font-weight:650;color:var(--text);letter-spacing:-.01em;display:flex;align-items:center;gap:.6rem}
+.iq-comp-desc{font-size:.84rem;color:var(--text2);margin-bottom:.85rem;line-height:1.45}
+.iq-card-title{font-size:.75rem;font-weight:650;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.85rem 0 .4rem;display:flex;align-items:center;gap:.45rem}
+.iq-card-title.accent{color:var(--primary-hover)}
+.iq-ev-card{background:var(--card);border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:var(--radius-sm);padding:.75rem 1rem;margin-bottom:.5rem;font-size:.87rem;color:var(--text);line-height:1.55}
+.iq-ev-empty{background:rgba(17,24,39,.6);border:1px dashed var(--border);border-left:3px solid var(--muted);border-radius:var(--radius-sm);padding:.85rem 1rem;color:var(--muted);font-size:.85rem;font-style:italic}
+.iq-rationale-box{background:rgba(22,119,255,.05);border:1px solid rgba(22,119,255,.2);border-radius:var(--radius-sm);padding:.85rem 1.1rem;margin:.5rem 0 .8rem;font-size:.87rem;color:var(--text2);line-height:1.55}
+.iq-gap-grid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem;margin:.6rem 0 .9rem}
+@media (max-width:768px){.iq-gap-grid{grid-template-columns:1fr}}
+.iq-gap-col{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.85rem 1rem}
+.iq-gap-col.demonstrated{border-top:3px solid var(--success)}
+.iq-gap-col.missing{border-top:3px solid var(--warning)}
+.iq-gap-list{list-style:none;padding:0;margin:0}
+.iq-gap-item{font-size:.83rem;color:var(--text2);margin-bottom:.4rem;display:flex;align-items:flex-start;gap:.45rem;line-height:1.45}
+.iq-gap-item:last-child{margin-bottom:0}
+.iq-gap-item i{font-style:normal;font-weight:700;flex-shrink:0}
+.iq-gap-col.demonstrated .iq-gap-item i{color:var(--success)}
+.iq-gap-col.missing .iq-gap-item i{color:var(--warning)}
+.iq-probe-box{background:var(--card);border:1px solid rgba(22,119,255,.3);border-radius:var(--radius-sm);padding:.9rem 1.1rem;margin-top:.7rem}
+.iq-probe-item{margin-bottom:.6rem}
+.iq-probe-item:last-child{margin-bottom:0}
+.iq-probe-tag{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--primary-hover);font-weight:600;margin-bottom:.2rem}
+.iq-probe-q{background:rgba(22,119,255,.08);border-left:2px solid var(--primary-hover);padding:.55rem .85rem;border-radius:0 6px 6px 0;font-size:.87rem;color:var(--text);font-weight:500;line-height:1.45}
+
 /* ---------- native widgets ---------- */
 .stButton>button,.stDownloadButton>button,[data-testid="stFormSubmitButton"]>button{border-radius:var(--radius-sm);border:1px solid var(--border);
 background:var(--card);color:var(--text);font-weight:550;padding:.5rem 1rem;transition:background .15s,border-color .15s,transform .05s}
