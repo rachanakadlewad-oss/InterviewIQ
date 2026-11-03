@@ -3,14 +3,16 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 try:  # python-dotenv is optional at import time
     from dotenv import load_dotenv
+    for _env_path in (BASE_DIR / ".env", BASE_DIR.parent / ".env", Path(".env")):
+        if _env_path.is_file():
+            load_dotenv(_env_path, override=False)
     load_dotenv()
 except Exception:  # pragma: no cover
     pass
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR = str(BASE_DIR / "runtime")
 DEFAULT_DB_URL = f"sqlite:///{str(BASE_DIR / 'runtime' / 'interviewiq.db').replace(chr(92), '/')}"
 
@@ -83,13 +85,17 @@ class Settings:
         else:
             db_url = f"sqlite:///{str(data_path / 'interviewiq.db').replace(chr(92), '/')}"
 
+        raw_api_key = os.getenv("LLM_API_KEY", "")
+        raw_provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+        active_provider = raw_provider or ("openai" if raw_api_key else "demo")
+
         s = cls(
-            llm_provider=os.getenv("LLM_PROVIDER", "demo").strip().lower(),
-            llm_api_key=os.getenv("LLM_API_KEY", ""),
+            llm_provider=active_provider,
+            llm_api_key=raw_api_key,
             llm_model=os.getenv("LLM_MODEL", ""),
             llm_base_url=os.getenv("LLM_BASE_URL", ""),
             llm_timeout=_i("LLM_TIMEOUT_SECONDS", 60),
-            agent_max_retries=_i("AGENT_MAX_RETRIES", 2),
+            agent_max_retries=_i("AGENT_MAX_RETRIES", 3),
             weight_resume=_f("WEIGHT_RESUME", 0.4),
             weight_interview=_f("WEIGHT_INTERVIEW", 0.6),
             recommend_advance_min=_f("RECOMMEND_ADVANCE_MIN", 70),

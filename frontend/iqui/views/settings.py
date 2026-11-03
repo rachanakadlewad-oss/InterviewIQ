@@ -6,7 +6,7 @@ from .. import api, components as C
 def render():
     C.page_header(
         "Settings",
-        "Inspect active backend configuration, evaluation thresholds, and operational limits, and test live AI provider connectivity.",
+        "System configuration, scoring weights, decision thresholds, and AI connectivity status.",
         "Recruiter workspace"
     )
 
@@ -25,68 +25,62 @@ def render():
     thresholds = cfg.get("thresholds", {})
     shortlist = cfg.get("shortlist", {})
     id_is_demo = cfg.get("identity_is_demo", True)
-    id_backend = cfg.get("identity_backend", "demo")
     id_thresh = cfg.get("identity_threshold", 0.70)
 
     # 1. Mode Callout
     if is_demo:
         C.callout(
-            "warning",
-            "Operating in Deterministic Demo Mode (No LLM Active)",
-            "The application is executing deterministic regex and heuristic rule-based logic for resume screening, dynamic questioning, and assessment. "
-            "To enable live AI reasoning, set LLM_PROVIDER (openai/anthropic), LLM_API_KEY, and LLM_MODEL in .env."
+            "info",
+            "Evaluation Mode: Rule-Based (Demo)",
+            "The workspace is currently operating in local demo mode using deterministic screening rules and interview heuristics. Connect an AI provider in configuration for live generative reasoning."
         )
     else:
         C.callout(
             "success",
-            f"Operating in LLM-Powered Mode ({provider.upper()})",
-            f"Connected to external provider '{provider}' using model '{model_name or 'Default'}'. "
-            "Recruitment, Interviewer, and Assessment agents run live inferences with structured Pydantic schema validation. "
-            "Note: Previously evaluated candidate records retain their original scoring label (e.g. 'Demo Rules') until rescored from the Candidates page."
+            f"Evaluation Mode: Live AI Reasoning ({provider.upper()})",
+            f"Connected to {provider.title()} using model '{model_name or 'Default'}'. Screening, Interviewer, and Assessment agents run live AI evaluations."
         )
 
     # 2. Key Metrics Grid
     C.metric_grid([
         {
             "label": "Application Mode",
-            "value": "Demo Rules" if is_demo else "LLM-Powered",
-            "hint": "Deterministic heuristics" if is_demo else f"Live {provider.title()} API"
+            "value": "Rule-Based Demo" if is_demo else "AI-Powered",
+            "hint": "Local heuristics" if is_demo else f"Live {provider.title()} API"
         },
         {
-            "label": "Configured Model",
+            "label": "AI Model",
             "value": "None (Rules)" if is_demo else (model_name or "Default"),
-            "hint": "No model in demo mode" if is_demo else f"Provider: {provider}"
+            "hint": "Rule-based engine" if is_demo else f"Provider: {provider.title()}"
         },
         {
-            "label": "Identity Mode",
-            "value": "Demo Adapter" if id_is_demo else "OpenCV Heuristic",
-            "hint": "Simulated scenarios" if id_is_demo else f"Haar + LBP (Thr: {id_thresh:.2f})"
+            "label": "Identity Check",
+            "value": "Simulated Demo" if id_is_demo else "Automated Check",
+            "hint": "Predefined test cases" if id_is_demo else f"Face match threshold: {id_thresh:.2f}"
         },
         {
-            "label": "Scoring Weight",
+            "label": "Evaluation Weights",
             "value": f"{w_res*100:.0f}% / {w_int*100:.0f}%",
             "hint": "Resume / Interview ratio"
         },
-    ])
+    ], cols=4)
 
-    st.markdown("---")
-
-    # 3. Interactive LLM Connectivity Test Tool
-    st.markdown("### 1. AI Model & Connectivity")
+    # 3. AI Connectivity & Health Check
+    C.section("AI Model & Connectivity", "Verify authentication and responsiveness of the connected AI reasoning provider.")
     with st.container(border=True):
-        col1, col2 = st.columns([2, 1])
+        col1, col2 = st.columns([2.2, 1.2], vertical_alignment="center")
         with col1:
             C.kv([
-                ("AI Mode", "Deterministic Demo (Heuristics)" if is_demo else "Live LLM Reasoning"),
+                ("AI Engine Mode", "Rule-based (Heuristics)" if is_demo else "Live AI Reasoning"),
                 ("Provider", provider.title()),
-                ("Model Name", "None (Demo heuristics)" if is_demo else (model_name or "Default")),
-                ("API Endpoint", "Local in-process" if is_demo else "Configured in .env"),
+                ("Configured Model", "None (Demo heuristics)" if is_demo else (model_name or "Default")),
+                ("Service Endpoint", "Local In-Process" if is_demo else "Configured in environment"),
             ])
         with col2:
-            st.markdown("**Test Model Connectivity**")
-            st.caption("Perform a live test call to verify authentication, endpoint connectivity, and model responsiveness.")
-            if st.button("Test Live Connection", type="primary", use_container_width=True, key="btn_test_llm_conn"):
-                with st.spinner("Pinging model endpoint..."):
+            st.markdown("**Connectivity Check**")
+            st.caption("Verify live API connection and model latency.")
+            if st.button("Test AI Connection", type="primary", use_container_width=True, key="btn_test_llm_conn"):
+                with st.spinner("Testing model connection..."):
                     test_res = api.call("POST", "/config/test-llm")
                 if test_res:
                     if test_res.get("status") == "ok":
@@ -97,46 +91,46 @@ def render():
                         err = test_res.get("error", "Unknown error")
                         C.callout("error", "Connection Failed", err)
 
-    # 4. Scoring Weights & Hiring Thresholds
-    st.markdown("### 2. Scoring Weights & Decision Thresholds")
+    # 4. Scoring Weights & Decision Thresholds
+    C.section("Scoring Weights & Decision Thresholds", "Configured rules for combining resume screening with interview evaluations.")
     with st.container(border=True):
         c_w1, c_w2 = st.columns(2)
         with c_w1:
-            st.markdown("##### Score Aggregation Weights")
+            st.markdown("##### Evaluation Weights")
             C.kv([
-                ("Resume Score Weight", f"{w_res*100:.0f}% ({w_res:.2f})"),
-                ("Interview Score Weight", f"{w_int*100:.0f}% ({w_int:.2f})"),
-                ("Weighted Combination", f"Final = ({w_res:.2f} × Resume) + ({w_int:.2f} × Interview)"),
+                ("Resume Screening Weight", f"{w_res*100:.0f}% ({w_res:.2f})"),
+                ("Spoken Interview Weight", f"{w_int*100:.0f}% ({w_int:.2f})"),
+                ("Combined Calculation", f"Final = ({w_res*100:.0f}% × Resume) + ({w_int*100:.0f}% × Interview)"),
             ])
         with c_w2:
-            st.markdown("##### Recommendation Cutoffs")
+            st.markdown("##### Recommendation Benchmarks")
             C.kv([
-                ("Recommend Advancing", f"Score ≥ {thresholds.get('advance_min', 70.0):.0f} / 100"),
-                ("Borderline / Recruiter Review", f"{thresholds.get('review_min', 50.0):.0f} ≤ Score < {thresholds.get('advance_min', 70.0):.0f}"),
-                ("Not Recommended", f"Score < {thresholds.get('review_min', 50.0):.0f} / 100"),
+                ("Recommend Advancing", f"Final Score ≥ {thresholds.get('advance_min', 70.0):.0f} / 100"),
+                ("Recruiter Review", f"{thresholds.get('review_min', 50.0):.0f} ≤ Final Score < {thresholds.get('advance_min', 70.0):.0f}"),
+                ("Not Recommended", f"Final Score < {thresholds.get('review_min', 50.0):.0f} / 100"),
             ])
 
     # 5. Shortlisting & Interview Guardrails
-    st.markdown("### 3. Shortlisting & Interview Limits")
+    C.section("Interview Guardrails & Shortlist Rules", "Configured limits that ensure standardized, fair evaluation across candidates.")
     with st.container(border=True):
         c_l1, c_l2 = st.columns(2)
         with c_l1:
-            st.markdown("##### Shortlisting Guardrails")
+            st.markdown("##### Shortlist Rules")
             C.kv([
                 ("Target Shortlist Size", f"Top {shortlist.get('top_n', 3)} candidates"),
                 ("Minimum Score Cutoff", f"{shortlist.get('min_score', 40.0):.0f} / 100"),
             ])
         with c_l2:
-            st.markdown("##### Dynamic Interview Limits")
+            st.markdown("##### Interview Session Guardrails")
             C.kv([
-                ("Max Questions per Interview", str(limits.get("max_questions", 8))),
-                ("Max Follow-ups per Competency", str(limits.get("max_followups", 2))),
-                ("Max Broad Pivots", str(limits.get("max_pivots", 2))),
-                ("Planned Competencies", str(limits.get("planned_competencies", 4))),
+                ("Max Questions per Session", f"{limits.get('max_questions', 8)} questions"),
+                ("Max Follow-ups per Skill", f"{limits.get('max_followups', 2)} questions"),
+                ("Max Competency Pivots", f"{limits.get('max_pivots', 2)} pivots"),
+                ("Planned Core Skills", f"{limits.get('planned_competencies', 4)} competencies"),
             ])
 
     # 6. Advanced Architecture & Technical Details (Collapsible)
-    with st.expander("Advanced: System Architecture, LangGraph Supervision & Integrity Guards"):
+    with st.expander("System Architecture & Security Details (Advanced)"):
         st.markdown(
             "#### LangGraph Deterministic Supervisor\n"
             "The hiring workflow is coordinated by a deterministic Python state machine orchestrated with LangGraph:\n"

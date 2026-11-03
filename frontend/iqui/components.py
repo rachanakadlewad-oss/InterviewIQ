@@ -79,12 +79,38 @@ def callout_html(tone: str, title: str, body: str = "") -> str:
             f'{f"<div class=b>{esc(body)}</div>" if body else ""}</div></div>')
 
 
-def metric_html(items: Iterable[dict]) -> str:
+def metric_html(items: Iterable[dict], cols: Optional[int] = None) -> str:
     cards = ""
     for it in items:
         cards += (f'<div class="iq-metric tone-{esc(it.get("tone", "neutral"))}"><div class="l">{esc(it["label"])}</div>'
                   f'<div class="v">{esc(it["value"])}</div><div class="h">{esc(it.get("hint", ""))}</div></div>')
-    return f'<div class="iq-grid">{cards}</div>'
+    cls = f"iq-grid iq-grid-{cols}" if cols else "iq-grid"
+    return f'<div class="{cls}">{cards}</div>'
+
+
+def pipeline_progression_html(stages: List[tuple]) -> str:
+    """stages: List of (stage_name, count)"""
+    first_count = stages[0][1] if stages else 0
+    top = max([count for _, count in stages] + [1])
+    ref = first_count if first_count > 0 else top
+
+    steps_html = []
+    for label, count in stages:
+        pct = max(0, min(100, int(round(count / ref * 100)))) if ref > 0 and count > 0 else 0
+        steps_html.append(
+            f'<div class="iq-pipe-step">'
+            f'<div class="iq-pipe-header">'
+            f'<span class="iq-pipe-label">{esc(label)}</span>'
+            f'<span class="iq-pipe-pct">{pct}%</span>'
+            f'</div>'
+            f'<div class="iq-pipe-val">{count}</div>'
+            f'<div class="iq-pipe-track"><div class="iq-pipe-fill" style="width:{pct}%"></div></div>'
+            f'</div>'
+        )
+
+    arrow_html = '<div class="iq-pipe-arrow">›</div>'
+    inner = arrow_html.join(steps_html)
+    return f'<div class="iq-pipeline-card">{inner}</div>'
 
 
 def funnel_html(stages: List[dict]) -> str:
@@ -170,8 +196,12 @@ def empty_state(title: str, body: str = "", icon: str = "📂"):
 
 
 
-def metric_grid(items):
-    _emit(metric_html(items))
+def metric_grid(items, cols: Optional[int] = None):
+    _emit(metric_html(items, cols=cols))
+
+
+def pipeline_progression(stages: List[tuple]):
+    _emit(pipeline_progression_html(stages))
 
 
 def funnel(stages):

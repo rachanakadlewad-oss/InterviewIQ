@@ -46,11 +46,23 @@ with st.sidebar:
         page = st.radio("Navigation", candidate.PAGES, label_visibility="collapsed", key="nav_candidate")
         if st.session_state.get("cand_token"):
             candidate.sign_out_button()
-    C.side_label("System")
+    C.side_label("System Status")
     if cfg:
-        llm = "Demo rules (no LLM)" if cfg["demo_llm"] else f"{cfg['llm_provider']} ({cfg.get('llm_model') or 'Default'})"
-        idm = "Demo adapter" if cfg["identity_is_demo"] else "OpenCV heuristic"
-        st.markdown(f'<div class="iq-mode"><b>AI:</b> {llm}<br><b>Identity:</b> {idm}</div>', unsafe_allow_html=True)
+        llm_label = "Rule-based (Demo)" if cfg["demo_llm"] else f"{cfg['llm_provider'].title()} ({cfg.get('llm_model') or 'Default'})"
+        idm_label = "Simulated Check" if cfg["identity_is_demo"] else "Automated Check"
+        st.markdown(
+            f'<div class="iq-mode" style="display:flex;flex-direction:column;gap:0.35rem;">'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;">'
+            f'<span style="color:var(--muted);font-size:0.72rem;">AI Engine</span>'
+            f'<span style="color:var(--text);font-weight:600;font-size:0.75rem;">{llm_label}</span>'
+            f'</div>'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;">'
+            f'<span style="color:var(--muted);font-size:0.72rem;">Verification</span>'
+            f'<span style="color:var(--text);font-weight:600;font-size:0.75rem;">{idm_label}</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
     else:
         C.callout("error", "Backend offline", "Run run_backend.bat")
 

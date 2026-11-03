@@ -11,6 +11,10 @@ log = logging.getLogger(__name__)
 
 class LLMError(Exception):
     """Transport / provider failure (timeout, HTTP error, empty response)."""
+    def __init__(self, message: str, status_code: int = 0, retry_after: float = 0.0):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
 
 
 class BaseLLM:
@@ -72,8 +76,24 @@ class OpenAICompatLLM(BaseLLM):
                 payload.pop("response_format", None)
                 r = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout)
             if not r.ok:
-                detail = r.text[:300]
-                raise LLMError(f"HTTP {r.status_code} ({r.reason}) calling {self.base_url}/chat/completions [model={self.model}]: {detail}")
+                detail = r.text[:400]
+                retry_after = 0.0
+                if r.status_code == 429:
+                    ra_hdr = r.headers.get("retry-after")
+                    if ra_hdr:
+                        try:
+                            retry_after = float(ra_hdr)
+                        except ValueError:
+                            pass
+                    if not retry_after:
+                        m = re.search(r"try again in (\d+\.?\d*)\s*s", detail, re.IGNORECASE)
+                        if m:
+                            retry_after = float(m.group(1))
+                raise LLMError(
+                    f"HTTP {r.status_code} ({r.reason}) calling {self.base_url}/chat/completions [model={self.model}]: {detail}",
+                    status_code=r.status_code,
+                    retry_after=retry_after,
+                )
             text = r.json()["choices"][0]["message"]["content"]
         except Exception as e:  # network, HTTP, parsing
             if isinstance(e, LLMError):

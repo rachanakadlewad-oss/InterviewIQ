@@ -33,8 +33,8 @@ def render():
         [a["application_id"] for a in apps],
         key="rep_pick",
         format_func=lambda i: next(
-            f"{a['name'] or 'Candidate #' + str(a['application_id'])} - {H.status_label(a['status'])[0]} "
-            f"(Resume: {a.get('resume_score') or 0:.0f}/100)"
+            f"{a['name'] or 'Candidate #' + str(a['application_id'])} — {H.status_label(a['status'])[0]} "
+            f"(Score: {a.get('resume_score') or 0:.1f} / 10)"
             for a in apps if a["application_id"] == i
         )
     )
@@ -46,7 +46,7 @@ def render():
 
     job = api.call("GET", f"/jobs/{job_id}") or {"competencies": []}
 
-    # Header with candidate info and 6-stage workflow stepper
+    # Header with candidate info and workflow stepper
     header(rep)
 
     asm = rep.get("assessment")
@@ -56,7 +56,7 @@ def render():
         if rep.get("assessment_error"):
             C.callout("error", "Assessment Generation Issue", rep["assessment_error"])
         else:
-            C.callout("info", "Interview Completed", "Interview has ended and is ready for assessment generation.")
+            C.callout("info", "Interview Completed", "Interview has concluded and is ready for assessment generation.")
         c_ret, _ = st.columns([2, 3])
         with c_ret:
             if st.button("Generate / Retry Assessment", type="primary", key=f"btn_retry_asm_{pick}"):
@@ -71,14 +71,14 @@ def render():
     else:
         completed_report_view(rep, pick, job, asm)
 
-    # Advanced Section: Decision Traces, System Logs, and JSON Download
-    with st.expander("Advanced: Decision Traces, Identity Audit & Raw Report Export"):
-        st.markdown("##### Turn-by-Turn LangGraph Decision Trace")
+    # Technical audit trail and data export kept cleanly in an expander at bottom
+    with st.expander("Technical Audit Trail & Raw Report Export"):
+        st.markdown("##### Turn-by-Turn Decision Trace")
         trace_tab(rep, job)
         if rep.get("identity_log"):
             st.markdown("##### Identity Verification Audit Trail")
             identity_table(rep["identity_log"])
-        st.markdown("##### Raw JSON Report")
+        st.markdown("##### Export Report")
         st.download_button(
             "Download Full Report (JSON)",
             json.dumps(rep, indent=2, default=str),
@@ -88,7 +88,7 @@ def render():
 
 
 def header(rep):
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([3.5, 1.5])
     with col1:
         st.markdown(f"### {rep['candidate'] or 'Application #' + str(rep['application_id'])}")
         bs = [
@@ -102,19 +102,11 @@ def header(rep):
             bs.append(C.badge(f"Interview: {al}", at, dot=False))
         C.badges(*bs)
     with col2:
-        st.caption(f"App ID: **#{rep['application_id']}**")
+        st.caption(f"Application: **#{rep['application_id']}**")
         if rep.get("email"):
             st.caption(f"Email: {rep['email']}")
 
-    st.markdown("##### Assessment Workflow Pipeline")
     C.stepper(H.recruiter_workflow_steps(rep["status"]))
-
-    if rep.get("llm_mode") == "demo":
-        C.callout(
-            "warning",
-            "Demo Mode Pipeline Active",
-            "Resume and interview evaluations in this demo environment run via deterministic rules and heuristics. Real LLM assessment requires configured API credentials."
-        )
 
 
 def pending_interview_view(rep, app_id, job):
@@ -130,32 +122,21 @@ def pending_interview_view(rep, app_id, job):
         int_score_val = "Ready"
         int_score_hint = "Ready for assessment generation"
     elif rep["status"] == "ASSESSMENT_FAILED":
-        int_score_val = "Failed"
-        int_score_hint = "Assessment failed - retry available"
+        int_score_val = "Needs Retry"
+        int_score_hint = "Assessment failed - click retry below"
 
     C.metric_grid([
         {"label": f"Resume Score ({w_res * 100:.0f}%)", "value": f"{resume_score:.1f}", "hint": f"Rank #{rep['resume']['rank'] or '-'} · Out of 100"},
         {"label": f"Interview Score ({w_int * 100:.0f}%)", "value": int_score_val, "hint": int_score_hint},
-        {"label": "Final Weighted Score", "value": "Pending", "hint": "Calculated after interview assessment"},
+        {"label": "Final Combined Score", "value": "Pending", "hint": f"Calculated after interview ({w_res*100:.0f}% / {w_int*100:.0f}%)"},
     ])
 
-    # 2. Configured Formula Banner
-    st.markdown(
-        f'<div class="iq-callout info" style="margin-top:0.6rem;margin-bottom:1.2rem;">'
-        f'<div><div class="t">Configured Scoring Formula</div>'
-        f'<div class="b"><b>Final Score = (Resume Weight × Resume Score) + (Interview Weight × Interview Score)</b><br>'
-        f'= ({w_res:.2f} × {resume_score:.1f}) + ({w_int:.2f} × Interview Score)<br>'
-        f'<i>Interview score and final score will be calculated once the interview is conducted.</i>'
-        f'</div></div></div>',
-        unsafe_allow_html=True
-    )
-
-    # 3. Status explanation
+    # 2. Status message
     status_messages = {
         "SCORED": "Candidate is scored but not yet shortlisted or scheduled.",
         "SHORTLISTED": "Candidate is shortlisted. Waiting to be scheduled into an interview slot.",
-        "SCHEDULED": "Candidate is scheduled for an interview slot. Identity verification and the interview session must be conducted before interview assessment and final scores are generated.",
-        "HUMAN_REVIEW": "Candidate is currently blocked in Identity Review queue.",
+        "SCHEDULED": "Candidate is scheduled for an interview slot. Identity verification and the interview session must be conducted before final scores are generated.",
+        "HUMAN_REVIEW": "Candidate is currently flagged for Identity Review.",
         "IDENTITY_PASSED": "Identity verification has passed. Candidate is ready for the interview session.",
         "INTERVIEW_IN_PROGRESS": "The interview session is currently in progress.",
         "INTERVIEW_COMPLETE": "The candidate has completed their interview session. Click 'Generate Assessment' below to evaluate answers against competency rubrics.",
@@ -164,14 +145,14 @@ def pending_interview_view(rep, app_id, job):
     }
     explanation = status_messages.get(rep["status"], "Interview assessment has not been completed yet.")
     callout_tone = "error" if rep["status"] == "ASSESSMENT_FAILED" else ("warning" if rep["status"] == "INTERVIEW_COMPLETE" else "info")
-    callout_title = "Assessment Generation Required" if rep["status"] in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED") else "No Interview Assessment Yet"
+    callout_title = "Assessment Ready to Generate" if rep["status"] in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED") else "Interview Assessment Pending"
     C.callout(callout_tone, callout_title, explanation)
 
-    # 4. Interactive Action: Conduct Interview & Generate Assessment
+    # 3. Interactive Action: Conduct Interview & Generate Assessment
     if rep["status"] in ("SCHEDULED", "IDENTITY_PASSED", "INTERVIEW_IN_PROGRESS"):
         with st.container(border=True):
-            st.markdown("#### Advance Candidate Workflow")
-            st.write("Progress this candidate through identity verification, conduct the interview session, and generate the competency assessment report.")
+            st.markdown("#### Progress Candidate")
+            st.write("Conduct the interview session and generate the competency assessment report.")
             col_act, _ = st.columns([2, 3])
             with col_act:
                 if st.button("Conduct Interview & Generate Assessment", type="primary", use_container_width=True, key=f"btn_cond_{app_id}"):
@@ -183,7 +164,7 @@ def pending_interview_view(rep, app_id, job):
     elif rep["status"] in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED"):
         with st.container(border=True):
             st.markdown("#### Generate Candidate Assessment")
-            st.write("The interview session has been recorded. Run the Assessment Agent to score competencies, cite evidence, and compute the final score.")
+            st.write("The interview session has been recorded. Generate the competency assessment to score each skill area.")
             col_act, _ = st.columns([2, 3])
             with col_act:
                 btn_lbl = "Retry Assessment Generation" if rep["status"] == "ASSESSMENT_FAILED" else "Generate Competency Assessment"
@@ -209,18 +190,15 @@ def completed_report_view(rep, app_id, job, asm):
     # 1. Score Cards
     C.metric_grid([
         {"label": f"Resume Score ({w_res * 100:.0f}%)", "value": f"{resume_score:.1f}", "hint": f"Rank #{rep['resume']['rank'] or '-'} · Out of 100"},
-        {"label": f"Interview Score ({w_int * 100:.0f}%)", "value": f"{interview_score:.1f}", "hint": "Planned competencies assessed · Out of 100"},
-        {"label": "Final Weighted Score", "value": f"{final_score:.1f}", "hint": f"Combined total out of 100"},
+        {"label": f"Interview Score ({w_int * 100:.0f}%)", "value": f"{interview_score:.1f}", "hint": "All competencies evaluated · Out of 100"},
+        {"label": "Final Combined Score", "value": f"{final_score:.1f}", "hint": f"Total combined out of 100"},
     ])
 
-    # 2. Configured Formula Breakdown Banner
-    st.markdown(
-        f'<div class="iq-callout info" style="margin-top:0.6rem;margin-bottom:1.2rem;">'
-        f'<div><div class="t">Final Score Calculation Formula</div>'
-        f'<div class="b"><b>Final Score = (Resume Weight × Resume Score) + (Interview Weight × Interview Score)</b><br>'
-        f'= ({w_res:.2f} × {resume_score:.1f}) + ({w_int:.2f} × {interview_score:.1f}) = <b>{final_score:.1f} / 100</b>'
-        f'</div></div></div>',
-        unsafe_allow_html=True
+    # 2. Formula Breakdown Callout
+    C.callout(
+        "info",
+        "Final Score Calculation",
+        f"Combined Score = ({w_res*100:.0f}% × {resume_score:.1f} Resume) + ({w_int*100:.0f}% × {interview_score:.1f} Interview) = <b>{final_score:.1f} / 100</b>"
     )
 
     # 3. Organized Tabs
@@ -228,8 +206,8 @@ def completed_report_view(rep, app_id, job, asm):
         "Executive Summary",
         "Competency Breakdown",
         "Interview Q&A Transcript",
-        "Candidate Feedback Preview",
-        "Candidate Profile"
+        "Candidate Profile",
+        "Candidate Feedback Preview"
     ])
 
     with tabs[0]:
@@ -242,34 +220,27 @@ def completed_report_view(rep, app_id, job, asm):
         qa_transcript_tab(rep, job)
 
     with tabs[3]:
-        feedback_preview_tab(rep, asm)
+        profile_tab(rep)
 
     with tabs[4]:
-        profile_tab(rep)
+        feedback_preview_tab(rep, asm)
 
     # 4. Recruiter's Final Hiring Decision Panel
     decision_panel(rep, app_id)
 
 
 def summary_tab(asm, rep):
-    is_real_llm = rep.get("llm_mode") != "demo" and asm.get("source") != "demo_rules"
     label, tone = H.RECOMMENDATION.get(asm.get("label"), (asm.get("label", "Neutral"), "neutral"))
 
-    if is_real_llm:
-        with st.container(border=True):
-            st.markdown("#### AI Recommendation (Advisory Only)")
-            C.badges(C.badge(label, tone))
-            st.write(asm.get("recommendation_rationale", ""))
-            st.caption("AI-generated assessment recommendation based on interview evidence. Advisory only.")
-    else:
-        with st.container(border=True):
-            st.markdown("#### Advisory Score Benchmark (Rule-Based Cutoff - Demo Rules)")
-            C.badges(C.badge(label, tone, dot=False))
-            st.write(asm.get("recommendation_rationale", ""))
-            st.caption("⚠️ Real LLM assessment is not active. This benchmark is derived from deterministic score cutoffs, NOT AI reasoning.")
+    with st.container(border=True):
+        st.markdown("#### Evaluation Recommendation & Rationale")
+        C.badges(C.badge(label, tone))
+        if asm.get("recommendation_rationale"):
+            st.write(asm.get("recommendation_rationale"))
+        st.caption("Advisory recommendation based on verified candidate competencies.")
 
     with st.container(border=True):
-        st.markdown("#### Recruiter Executive Summary")
+        st.markdown("#### Executive Summary")
         st.write(asm.get("recruiter_summary", "No summary provided."))
 
     c1, c2 = st.columns(2)
@@ -293,9 +264,9 @@ def competency_tab(rep, asm, job):
 
     C.table(
         [("name", "Competency", "strong"), ("weight", "Weight"), ("resume", "Resume Score"), ("interview", "Interview Score"), ("status", "Evidence Status")],
-        [{"name": row["name"], "weight": row["weight"],
-          "resume": f"{row['resume_score']:.1f}/10" if row.get("resume_score") is not None else "-",
-          "interview": f"{row['interview_score']:.1f}/10" if row.get("interview_score") is not None else "Not assessed",
+        [{"name": row["name"], "weight": f"{row['weight']:.1f}x",
+          "resume": f"{row['resume_score']:.1f} / 10" if row.get("resume_score") is not None else "-",
+          "interview": f"{row['interview_score']:.1f} / 10" if row.get("interview_score") is not None else "Not assessed",
           "status": C.badge("Direct Evidence", "success") if (row.get("interview_score") or 0) >= 6 else (C.badge("Partial", "warning") if row.get("interview_score") else C.badge("Pending", "neutral"))}
          for row in table]
     )

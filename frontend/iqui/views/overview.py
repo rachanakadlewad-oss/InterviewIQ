@@ -2,85 +2,125 @@ import streamlit as st
 
 from .. import api, components as C, helpers as H
 
+TASK_STATUS_MAP = {
+    "identity": ("Identity Verification Needed", "error"),
+    "failed_assessment": ("Needs Review / Retry", "error"),
+    "screen": ("Ready to Screen", "warning"),
+    "shortlist": ("Ready to Shortlist", "warning"),
+    "schedule": ("Ready to Schedule", "warning"),
+    "decide": ("Awaiting Final Decision", "info"),
+    "live": ("Interview in Progress", "info"),
+    "upload": ("Add Resumes", "info"),
+    "create_job": ("Create Job", "info"),
+}
+
 
 def render():
     C.page_header(
         "Dashboard",
-        "High-level hiring pipeline, active job openings, and urgent recruiter action items.",
-        "Recruiter workspace"
+        "Overview of your active recruitment pipeline, hiring metrics, and pending actions.",
+        "Recruiter workspace",
     )
+
     ov = api.call("GET", "/overview")
     if ov is None:
         return
-    m, na = ov["metrics"], ov["next_action"]
 
-    if m["active_jobs"] == 0:
-        C.empty_state("Welcome to InterviewIQ", "Start by creating a job, then upload resumes to screen candidates.")
-        c1, c2 = st.columns([1, 1])
-        c1.button("Create a job", on_click=api.go, args=("Jobs",), type="primary")
-        if c2.button("Load the sample job and calendar"):
-            r = api.call("POST", "/jobs/load-sample")
-            if r:
-                api.select_job_next_run(r["id"])
-                api.flash("success", "Sample job and calendar loaded", "Next: upload resumes on the Candidates page.")
-                st.rerun()
+    m = ov.get("metrics") or {}
+
+    # Empty state when no jobs exist
+    if m.get("active_jobs", 0) == 0:
+        C.empty_state(
+            "Welcome to InterviewIQ",
+            "Get started by creating your first job opening, or load sample data to explore the platform.",
+            icon="👋"
+        )
+        c1, c2, _ = st.columns([1.5, 2, 2.5])
+        with c1:
+            st.button("Create a Job", on_click=api.go, args=("Jobs",), type="primary", use_container_width=True)
+        with c2:
+            if st.button("Load Sample Job & Calendar", use_container_width=True):
+                r = api.call("POST", "/jobs/load-sample")
+                if r:
+                    api.select_job_next_run(r["id"])
+                    api.flash("success", "Sample job loaded", "Next: upload resumes on the Candidates page.")
+                    st.rerun()
         return
 
-    if na:
-        left, right = st.columns([4.8, 1.2])
-        target_page = "Interviews" if na.get("key") == "schedule" else api.PAGE_MAP.get(na["page"], na["page"])
-        with left:
-            C.callout(na["tone"], "Next Recommended Action", na["label"])
-        with right:
-            st.button(f"Go to {target_page}", on_click=api.go, args=(target_page,), key="next_open", type="primary", use_container_width=True)
-    else:
-        C.callout("success", "You are all caught up", "No pipeline blocks require immediate recruiter attention.")
-
+    # 1. Four essential metric cards
     C.metric_grid([
-        {"label": "Active jobs", "value": m["active_jobs"], "hint": "Positions created"},
-        {"label": "Total applicants", "value": m["total_applicants"], "hint": f"{m['awaiting_screening']} not scored yet"},
-        {"label": "Awaiting review", "value": m["awaiting_review"], "hint": "Scored, pending shortlist", "tone": "warning" if m["awaiting_review"] else "neutral"},
-        {"label": "Shortlisted", "value": m["shortlisted"], "hint": f"{m['awaiting_scheduling']} need slots"},
-        {"label": "Scheduled interviews", "value": m["scheduled"], "hint": f"{m['free_slots']} free calendar slots"},
-        {"label": "Identity reviews", "value": m["pending_identity"], "hint": "Blocking interviews" if m["pending_identity"] else "All cleared", "tone": "error" if m["pending_identity"] else "neutral"},
-        {"label": "Completed interviews", "value": m["completed_interviews"], "hint": f"{m['interviews_in_progress']} in progress"},
-        {"label": "Awaiting decision", "value": m["awaiting_decision"], "hint": "Reports to decide", "tone": "warning" if m["awaiting_decision"] else "neutral"},
-    ])
+        {"label": "Active Jobs", "value": m.get("active_jobs", 0), "hint": "Open positions"},
+        {"label": "Total Candidates", "value": m.get("total_applicants", 0), "hint": "In hiring pipeline"},
+        {"label": "Scheduled Interviews", "value": m.get("scheduled", 0), "hint": "Confirmed sessions"},
+        {
+            "label": "Pending Decisions",
+            "value": m.get("awaiting_decision", 0),
+            "hint": "Awaiting final review",
+            "tone": "warning" if m.get("awaiting_decision", 0) > 0 else "neutral",
+        },
+    ], cols=4)
 
-    a, b = st.columns([1, 1], gap="medium")
-    with a:
-        C.section("Hiring Pipeline", "Cumulative progression across evaluation stages.")
-        with st.container(border=True):
-            C.funnel(ov["funnel"])
-    with b:
-        C.section("Pending Recruiter Actions", "Action items blocking candidate progression.")
-        with st.container(border=True):
-            if not ov["pending_actions"]:
-                C.empty_state("Nothing pending", "All candidates are progressing smoothly.", icon="✅")
-            else:
-                for i, act in enumerate(ov["pending_actions"]):
-                    c1, c2 = st.columns([3.8, 1.2])
-                    tgt = "Interviews" if act.get("key") == "schedule" else api.PAGE_MAP.get(act["page"], act["page"])
-                    with c1:
-                        C.badges(C.badge(tgt, act["tone"], dot=False))
-                        st.caption(act["label"])
-                    with c2:
-                        st.button("Open", key=f"act_{i}", on_click=api.go, args=(tgt,), use_container_width=True)
+    # 2. Needs Attention - Clear, actionable recruiter tasks
+    pending_actions = ov.get("pending_actions") or []
+    C.section("Needs Attention", "Tasks requiring your review to keep candidates moving forward.")
 
-    C.section("Job Openings Summary", "Live pipeline metrics per job role.")
-    C.table([("title", "Job Title", "strong"), ("applicants", "Applicants", "r"), ("scored", "Scored", "r"),
-             ("shortlisted", "Shortlisted", "r"), ("completed", "Interviews Done", "r")], ov["per_job"])
-
-    with st.expander("Advanced: Metric Calculations & Pipeline Synchronization"):
-        st.markdown(
-            "**Data Synchronization Rules:**\n"
-            "- All figures are read live from SQLite database records without caching or fabrication.\n"
-            "- **Total Applicants:** Every application record created from an uploaded resume.\n"
-            "- **Awaiting Screening:** Candidates in `PARSED` or `SCORING_FAILED` status.\n"
-            "- **Awaiting Review:** Candidates in `SCORED` status awaiting shortlist confirmation.\n"
-            "- **Shortlisted:** Confirmed shortlisted candidates awaiting calendar scheduling (`SHORTLISTED`).\n"
-            "- **Scheduled:** Booked interview calendar slots (`SCHEDULED`).\n"
-            "- **Identity Reviews:** Open review tickets blocking candidate interview access (`HUMAN_REVIEW`).\n"
-            "- **Completed Interviews:** Completed interviews undergoing or finished assessment (`INTERVIEW_COMPLETE`, `ASSESSED`, `DECIDED`).\n"
-            "- **Awaiting Decision:** Assessed candidates awaiting recruiter decision (`ASSESSED`)."
+    if not pending_actions:
+        C.empty_state(
+            "All Caught Up",
+            "No tasks currently require your attention. All candidates are progressing smoothly.",
+            icon="✅",
         )
+    else:
+        with st.container(border=True):
+            for i, act in enumerate(pending_actions):
+                tgt = "Interviews" if act.get("key") == "schedule" else api.PAGE_MAP.get(act.get("page", ""), act.get("page", ""))
+                status_text, status_tone = TASK_STATUS_MAP.get(
+                    act.get("key"),
+                    (act.get("tone", "neutral").replace("_", " ").title(), act.get("tone", "neutral"))
+                )
+
+                c_left, c_right = st.columns([4.2, 1.2], vertical_alignment="center")
+                with c_left:
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;min-width:0;padding:0.2rem 0;">'
+                        f'{C.badge(status_text, status_tone)}'
+                        f'<span style="color:var(--text);font-size:0.9rem;font-weight:550;line-height:1.4;">'
+                        f'{C.esc(act.get("label", ""))}'
+                        f'</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                with c_right:
+                    btn_type = "primary" if i == 0 else "secondary"
+                    st.button(
+                        f"Open {tgt}",
+                        key=f"na_act_{i}",
+                        on_click=api.go,
+                        args=(tgt,),
+                        type=btn_type,
+                        use_container_width=True,
+                    )
+                if i < len(pending_actions) - 1:
+                    st.markdown('<div style="border-bottom:1px solid rgba(30,45,74,0.6);margin:0.25rem 0;"></div>', unsafe_allow_html=True)
+
+    # 3. Hiring Pipeline Progression
+    C.section("Hiring Pipeline", "Candidate progression through each stage of the hiring process.")
+    funnel_map = {f.get("stage"): f.get("count", 0) for f in ov.get("funnel", [])}
+    pipeline_stages = [
+        ("Applied", funnel_map.get("Uploaded", m.get("total_applicants", 0))),
+        ("Screened", funnel_map.get("Scored", 0)),
+        ("Shortlisted", funnel_map.get("Shortlisted", m.get("shortlisted", 0))),
+        ("Interviewed", funnel_map.get("Interviewed", m.get("completed_interviews", 0))),
+        ("Decided", funnel_map.get("Decided", m.get("decided", 0))),
+    ]
+    C.pipeline_progression(pipeline_stages)
+
+    # 4. Active Job Openings Table
+    C.section("Active Job Openings", "Overview of current candidate counts and interview progress per job.")
+    job_columns = [
+        ("title", "Job Title", "strong"),
+        ("applicants", "Total Candidates", "r"),
+        ("shortlisted", "Shortlisted", "r"),
+        ("completed", "Interviews Completed", "r"),
+    ]
+    C.table(job_columns, ov.get("per_job", []), empty="No active job openings found.")
