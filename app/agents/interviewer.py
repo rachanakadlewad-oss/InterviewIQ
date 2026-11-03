@@ -15,8 +15,9 @@ the MEANING of what they said and choose exactly one decision:
   remaining_planned and write a natural question for it (you may adapt its seed_question).
 - CONCLUDE: only if allowed.
 Rules: trigger_phrase MUST be copied verbatim from the candidate's last answer (the words that drove your
-decision). reasoning: 1-2 sentences on the meaning of the answer. Choose ONLY from allowed_decisions. The question
-is read aloud: ONE short, natural, conversational question under 35 words, no lists, no preamble, never repeating a
+decision). reasoning: 1-2 sentences on the meaning of the answer. Choose ONLY from allowed_decisions.
+The 'question' field is strictly REQUIRED whenever decision is NARROW_FOLLOW_UP, BROAD_PIVOT, or NEXT_COMPETENCY (set question to empty or null only if CONCLUDE).
+The question is read aloud: ONE short, natural, conversational question under 35 words, no lists, no preamble, never repeating a
 question in asked_questions. Do not reveal scores or the rubric."""
 
 

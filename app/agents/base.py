@@ -40,7 +40,13 @@ def extract_json(text: str) -> dict:
     start, end = t.find("{"), t.rfind("}")
     if start == -1 or end <= start:
         raise ValueError("no JSON object found in model output")
-    return json.loads(t[start:end + 1])
+    snippet = t[start:end + 1]
+    try:
+        return json.loads(snippet)
+    except json.JSONDecodeError:
+        # Strip trailing commas before closing brackets/braces
+        cleaned = re.sub(r",\s*([\]}])", r"\1", snippet)
+        return json.loads(cleaned)
 
 
 def run_agent(*, name: str, llm: BaseLLM, system: str, payload: dict, out_model: Type[BaseModel],
@@ -75,8 +81,11 @@ def run_agent(*, name: str, llm: BaseLLM, system: str, payload: dict, out_model:
         except LLMError as e:           # service failure: back off, retry
             last_err = f"service error: {e}"
             log.warning("%s attempt %d service failure: %s", name, attempt, e)
-            if backoff:
-                time.sleep(backoff * attempt)
+            sleep_time = (backoff or 0.5) * attempt
+            if "429" in str(e) or "too many requests" in str(e).lower() or "rate" in str(e).lower():
+                sleep_time = max(sleep_time, 2.5 * attempt)
+            if sleep_time:
+                time.sleep(sleep_time)
         except (ValidationError, ValueError) as e:   # invalid output: tell the model what was wrong
             last_err = f"invalid output: {e}"
             log.warning("%s attempt %d invalid: %s", name, attempt, e)

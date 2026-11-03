@@ -20,6 +20,9 @@ class BaseLLM:
     def complete(self, system: str, user: str) -> str:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def test_connection(self) -> dict:
+        return {"status": "ok", "provider": self.name, "message": f"Provider {self.name} initialized."}
+
 
 class DemoLLM(BaseLLM):
     name = "demo"
@@ -27,6 +30,10 @@ class DemoLLM(BaseLLM):
 
     def complete(self, system, user):
         raise LLMError("DemoLLM does not call a model")
+
+    def test_connection(self) -> dict:
+        return {"status": "ok", "provider": "demo", "is_demo": True,
+                "message": "Demo mode active (rule-based deterministic heuristics, no network connection required)."}
 
 
 class OpenAICompatLLM(BaseLLM):
@@ -40,18 +47,24 @@ class OpenAICompatLLM(BaseLLM):
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
 
     def complete(self, system, user):
+        payload = {
+            "model": self.model,
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         try:
             r = requests.post(
                 f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": self.model,
-                    "temperature": 0.2,
-                    "response_format": {"type": "json_object"},
-                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                },
+                headers=headers,
+                json=payload,
                 timeout=self.timeout,
             )
+            # If the provider rejects response_format (e.g. some endpoints don't support json_object mode), retry without it
+            if r.status_code == 400 and ("response_format" in r.text or "json_object" in r.text):
+                payload.pop("response_format", None)
+                r = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout)
             r.raise_for_status()
             text = r.json()["choices"][0]["message"]["content"]
         except Exception as e:  # network, HTTP, parsing
@@ -59,6 +72,19 @@ class OpenAICompatLLM(BaseLLM):
         if not text or not text.strip():
             raise LLMError("empty LLM response")
         return text
+
+    def test_connection(self) -> dict:
+        import time
+        start = time.time()
+        try:
+            raw = self.complete("You are a helpful assistant.", "Return a JSON object: {\"status\": \"ok\"}")
+            latency = round((time.time() - start) * 1000, 1)
+            return {"status": "ok", "provider": self.name, "model": self.model, "base_url": self.base_url,
+                    "latency_ms": latency, "message": f"Successfully connected to {self.model} ({latency} ms)"}
+        except Exception as e:
+            latency = round((time.time() - start) * 1000, 1)
+            return {"status": "error", "provider": self.name, "model": self.model, "base_url": self.base_url,
+                    "latency_ms": latency, "error": str(e)}
 
 
 class AnthropicLLM(BaseLLM):
@@ -86,6 +112,19 @@ class AnthropicLLM(BaseLLM):
         if not text.strip():
             raise LLMError("empty LLM response")
         return text
+
+    def test_connection(self) -> dict:
+        import time
+        start = time.time()
+        try:
+            raw = self.complete("You are a helpful assistant.", "Return a JSON object: {\"status\": \"ok\"}")
+            latency = round((time.time() - start) * 1000, 1)
+            return {"status": "ok", "provider": self.name, "model": self.model,
+                    "latency_ms": latency, "message": f"Successfully connected to {self.model} ({latency} ms)"}
+        except Exception as e:
+            latency = round((time.time() - start) * 1000, 1)
+            return {"status": "error", "provider": self.name, "model": self.model,
+                    "latency_ms": latency, "error": str(e)}
 
 
 def get_llm(settings) -> BaseLLM:

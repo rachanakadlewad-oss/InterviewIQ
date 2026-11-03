@@ -54,8 +54,19 @@ def config():
 
 
 # ---- navigation -------------------------------------------------------------
+PAGE_MAP = {
+    "Overview": "Dashboard",
+    "Shortlist & Scheduling": "Candidates",
+    "Identity Review": "Interviews",
+    "Reports & Decisions": "Reports",
+    "Settings & Demo Info": "Settings",
+}
+
+
 def go(page: str, role: str = "recruiter"):
     """on_click callback: switch the sidebar navigation."""
+    if role == "recruiter":
+        page = PAGE_MAP.get(page, page)
     st.session_state[f"nav_{role}"] = page
 
 

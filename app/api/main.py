@@ -21,6 +21,7 @@ from app.services import overview as overview_svc
 from app.services import reports, scheduler
 from app.services.resume_parser import ResumeParseError, parse_resume
 from app.services.state_machine import GateViolation
+from app.llm.client import get_llm
 from app.workflow.supervisor import NotFound, Supervisor, new_access_token
 
 log = logging.getLogger(__name__)
@@ -92,6 +93,14 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
                 "recruiter_auth_enabled": bool(s.recruiter_api_key),
                 "thresholds": {"advance_min": s.recommend_advance_min, "review_min": s.recommend_review_min},
                 "shortlist": {"top_n": s.shortlist_top_n, "min_score": s.shortlist_min_score}}
+
+    @app.post("/config/test-llm")
+    def test_llm_connectivity():
+        try:
+            active_llm = llm or get_llm(s)
+            return active_llm.test_connection()
+        except Exception as e:
+            return {"status": "error", "provider": s.llm_provider, "model": s.llm_model, "error": str(e)}
 
     @app.get("/overview", dependencies=[Depends(recruiter)])
     def overview(db=Depends(get_db)):

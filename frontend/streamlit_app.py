@@ -6,26 +6,24 @@ import streamlit as st
 st.set_page_config(page_title="InterviewIQ", page_icon="IQ", layout="wide", initial_sidebar_state="expanded")
 
 from iqui import api, components as C  # noqa: E402
-from iqui.views import (candidate, candidates, identity_review, jobs, overview, reports, scheduling, settings)  # noqa: E402
+from iqui.views import (candidate, candidates, interviews, jobs, overview, reports, settings)  # noqa: E402
 
 RECRUITER_PAGES = {
-    "Overview": overview.render,
+    "Dashboard": overview.render,
     "Jobs": jobs.render,
     "Candidates": candidates.render,
-    "Shortlist & Scheduling": scheduling.render,
-    "Identity Review": identity_review.render,
-    "Reports & Decisions": reports.render,
-    "Settings & Demo Info": settings.render,
+    "Interviews": interviews.render,
+    "Reports": reports.render,
+    "Settings": settings.render,
 }
 
 RECRUITER_LABELS = {
-    "Overview": "📊  Overview",
-    "Jobs": "💼  Job Openings",
-    "Candidates": "👥  Candidates & Screening",
-    "Shortlist & Scheduling": "📅  Shortlist & Scheduling",
-    "Identity Review": "🛡️  Identity Review",
-    "Reports & Decisions": "📑  Reports & Decisions",
-    "Settings & Demo Info": "⚙️  Settings & Info",
+    "Dashboard": "📊  Dashboard",
+    "Jobs": "💼  Jobs",
+    "Candidates": "👥  Candidates",
+    "Interviews": "🎙️  Interviews",
+    "Reports": "📑  Reports",
+    "Settings": "⚙️  Settings",
 }
 
 C.inject_theme()
@@ -43,7 +41,6 @@ with st.sidebar:
             key="nav_recruiter",
             format_func=lambda k: RECRUITER_LABELS.get(k, k)
         )
-
     else:
         C.side_label("My interview")
         page = st.radio("Navigation", candidate.PAGES, label_visibility="collapsed", key="nav_candidate")
@@ -51,7 +48,7 @@ with st.sidebar:
             candidate.sign_out_button()
     C.side_label("System")
     if cfg:
-        llm = "Demo rules (no LLM)" if cfg["demo_llm"] else f"{cfg['llm_provider']}"
+        llm = "Demo rules (no LLM)" if cfg["demo_llm"] else f"{cfg['llm_provider']} ({cfg.get('llm_model') or 'Default'})"
         idm = "Demo adapter" if cfg["identity_is_demo"] else "OpenCV heuristic"
         st.markdown(f'<div class="iq-mode"><b>AI:</b> {llm}<br><b>Identity:</b> {idm}</div>', unsafe_allow_html=True)
     else:

@@ -24,8 +24,12 @@ def _records(df: pd.DataFrame) -> list:
 
 
 def render():
-    C.page_header("Jobs", "A job defines the competencies every candidate is screened and interviewed against.", "Recruiter workspace")
-    tab_list, tab_new = st.tabs(["Your jobs", "Create a job"])
+    C.page_header(
+        "Jobs",
+        "A job defines the competencies every candidate is screened and interviewed against.",
+        "Recruiter workspace"
+    )
+    tab_list, tab_new = st.tabs(["Active Jobs", "Create a Job"])
     with tab_list:
         jobs_view()
     with tab_new:
@@ -35,7 +39,7 @@ def render():
 def jobs_view():
     ov = api.call("GET", "/overview") or {"per_job": []}
     if not ov["per_job"]:
-        C.empty_state("No jobs yet", "Use the 'Create a job' tab, or load the sample job from the Overview page.", icon="💼")
+        C.empty_state("No jobs yet", "Use the 'Create a Job' tab, or load the sample job from the Dashboard.", icon="💼")
         return
     selected = api.job_picker("Selected job")
     C.table([("job_id", "ID"), ("title", "Job Title", "strong"), ("applicants", "Applicants", "r"), ("scored", "Scored", "r"),
@@ -53,20 +57,21 @@ def jobs_view():
         C.table([("name", "Competency", "strong"), ("weight", "Weight"), ("share", "Share of Resume Score"), ("keywords", "Demo Keywords")],
                 [{"name": c["name"], "weight": c["weight"], "share": C.score_bar(c["weight"] / tw * 100, 100),
                   "keywords": ", ".join(c.get("keywords", [])[:5]) or "-"} for c in job["competencies"]])
-        for c in job["competencies"]:
-            if c.get("rubric") or c.get("questions"):
-                with st.expander(f"Rubric & Opening Question - {c['name']}"):
-                    for lvl, txt in sorted(c.get("rubric", {}).items()):
-                        st.markdown(f"**Level {lvl}:** {txt}")
-                    for q in c.get("questions", []):
-                        st.markdown(f"*Opening question:* {q}")
 
+        with st.expander("Advanced: Competency Rubrics & Seed Questions"):
+            for c in job["competencies"]:
+                st.markdown(f"**{c['name']}** (Weight: {c.get('weight', 1.0)})")
+                if c.get("rubric"):
+                    for lvl, txt in sorted(c.get("rubric", {}).items()):
+                        st.markdown(f"• *Level {lvl}:* {txt}")
+                for q in c.get("questions", []):
+                    st.caption(f"Opening Seed: {q}")
+                st.markdown("---")
 
 
 def create_view():
-    C.callout("info", "Describe the role in plain fields",
-              "Add one row per competency. The rubric levels tell the AI what weak, working and strong evidence looks like - "
-              "clear rubrics give fairer, more explainable scores.")
+    C.callout("info", "Define Competency Rubrics",
+              "Add one row per competency. Clear rubric levels give fairer, more explainable scoring across both resume evaluation and the spoken interview.")
     with st.form("create_job"):
         title = st.text_input("Job title", placeholder="e.g. Backend Python Engineer")
         desc = st.text_area("Job description", placeholder="Responsibilities, seniority, tech stack...", height=110)
@@ -87,27 +92,17 @@ def create_view():
             res = api.call("POST", "/jobs", json={"title": title.strip(), "description": desc.strip(), "competencies": clean})
             if res:
                 api.select_job_next_run(res["id"])
-                api.flash("success", "Job created", f"'{res['title']}' is ready. Next, upload resumes on the Candidates page.")
+                api.flash("success", "Job created", f"'{res['title']}' is ready. Next: upload resumes on the Candidates page.")
                 st.rerun()
-    c1, c2 = st.columns(2)
-    with c1:
-        with st.expander("Advanced: import a job from JSON"):
-            txt = st.text_area("Job JSON", value=SAMPLE.read_text() if SAMPLE.exists() else "{}", height=180, key="json_import")
-            if st.button("Import JSON"):
-                try:
-                    res = api.call("POST", "/jobs", json=json.loads(txt))
-                    if res:
-                        api.select_job_next_run(res["id"])
-                        api.flash("success", "Job imported", res["title"])
-                        st.rerun()
-                except json.JSONDecodeError as e:
-                    C.callout("error", "Invalid JSON", str(e))
-    with c2:
-        with st.expander("Load the sample job and mock calendar"):
-            st.caption("Creates 'Backend Python Engineer' (10 competencies) and loads the sample interview slots.")
-            if st.button("Load sample"):
-                r = api.call("POST", "/jobs/load-sample")
-                if r:
-                    api.select_job_next_run(r["id"])
-                    api.flash("success", "Sample loaded", f"Job #{r['id']} created; {r['slots_added']} calendar slots added.")
+
+    with st.expander("Advanced: Import Job from JSON Specification"):
+        txt = st.text_area("Job JSON", value=SAMPLE.read_text() if SAMPLE.exists() else "{}", height=180, key="json_import")
+        if st.button("Import JSON"):
+            try:
+                res = api.call("POST", "/jobs", json=json.loads(txt))
+                if res:
+                    api.select_job_next_run(res["id"])
+                    api.flash("success", "Job imported", f"'{res['title']}' loaded.")
                     st.rerun()
+            except Exception as e:
+                C.callout("error", "Invalid JSON", str(e))

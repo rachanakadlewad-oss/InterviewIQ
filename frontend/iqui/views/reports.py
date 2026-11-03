@@ -14,8 +14,8 @@ DECISION_OPTIONS = {
 
 def render():
     C.page_header(
-        "Interview Reports & Decisions",
-        "Review candidate performance across resume and interview dimensions, inspect verification and decision evidence, and record the final hiring decision.",
+        "Reports",
+        "Review candidate performance across resume and interview dimensions, inspect competency evidence, and record your final hiring decision.",
         "Recruiter workspace"
     )
 
@@ -52,12 +52,18 @@ def render():
     asm = rep.get("assessment")
 
     # Assessment failure retry handler
-    if rep.get("assessment_error"):
-        C.callout("error", "The Assessment Agent failed for this interview", rep["assessment_error"])
-        if st.button("Retry assessment", type="primary"):
-            if api.call("POST", f"/applications/{pick}/assessment/retry"):
-                api.flash("success", "Assessment retried", "Assessment rerun successfully.")
-                st.rerun()
+    if rep.get("assessment_error") or rep["status"] in ("ASSESSMENT_FAILED", "INTERVIEW_COMPLETE"):
+        if rep.get("assessment_error"):
+            C.callout("error", "Assessment Generation Issue", rep["assessment_error"])
+        else:
+            C.callout("info", "Interview Completed", "Interview has ended and is ready for assessment generation.")
+        c_ret, _ = st.columns([2, 3])
+        with c_ret:
+            if st.button("Generate / Retry Assessment", type="primary", key=f"btn_retry_asm_{pick}"):
+                with st.spinner("Generating competency assessment..."):
+                    if api.call("POST", f"/applications/{pick}/assessment/retry"):
+                        api.flash("success", "Assessment Generated", "Assessment generated successfully.")
+                        st.rerun()
 
     # Flow branching: before interview assessment vs after interview assessment
     if not asm:
@@ -65,13 +71,20 @@ def render():
     else:
         completed_report_view(rep, pick, job, asm)
 
-    st.markdown("---")
-    st.download_button(
-        "Download Full Report (JSON)",
-        json.dumps(rep, indent=2, default=str),
-        file_name=f"interviewiq_report_{pick}.json",
-        mime="application/json"
-    )
+    # Advanced Section: Decision Traces, System Logs, and JSON Download
+    with st.expander("Advanced: Decision Traces, Identity Audit & Raw Report Export"):
+        st.markdown("##### Turn-by-Turn LangGraph Decision Trace")
+        trace_tab(rep, job)
+        if rep.get("identity_log"):
+            st.markdown("##### Identity Verification Audit Trail")
+            identity_table(rep["identity_log"])
+        st.markdown("##### Raw JSON Report")
+        st.download_button(
+            "Download Full Report (JSON)",
+            json.dumps(rep, indent=2, default=str),
+            file_name=f"interviewiq_report_{pick}.json",
+            mime="application/json"
+        )
 
 
 def header(rep):
@@ -93,7 +106,6 @@ def header(rep):
         if rep.get("email"):
             st.caption(f"Email: {rep['email']}")
 
-    # 6-Stage Workflow Progress Stepper
     st.markdown("##### Assessment Workflow Pipeline")
     C.stepper(H.recruiter_workflow_steps(rep["status"]))
 
@@ -111,7 +123,7 @@ def pending_interview_view(rep, app_id, job):
     w_res = cfg_weights.get("resume", 0.4)
     w_int = cfg_weights.get("interview", 0.6)
 
-    # 1. Scores Grid: Real resume score, pending interview score (no fake scores!)
+    # 1. Scores Grid
     C.metric_grid([
         {"label": f"Resume Score ({w_res * 100:.0f}%)", "value": f"{resume_score:.1f}", "hint": f"Rank #{rep['resume']['rank'] or '-'} · Out of 100"},
         {"label": f"Interview Score ({w_int * 100:.0f}%)", "value": "Pending", "hint": "Awaiting interview session"},
@@ -146,28 +158,17 @@ def pending_interview_view(rep, app_id, job):
     if rep["status"] in ("SCHEDULED", "IDENTITY_PASSED", "INTERVIEW_IN_PROGRESS"):
         with st.container(border=True):
             st.markdown("#### Advance Candidate Workflow")
-            st.write(
-                "Progress this candidate through identity verification, conduct the interview session with planned job competencies, "
-                "and generate the competency assessment report."
-            )
+            st.write("Progress this candidate through identity verification, conduct the interview session, and generate the competency assessment report.")
             col_act, _ = st.columns([2, 3])
             with col_act:
-                if st.button("Conduct Interview & Generate Assessment", type="primary", use_container_width=True):
+                if st.button("Conduct Interview & Generate Assessment", type="primary", use_container_width=True, key=f"btn_cond_{app_id}"):
                     with st.spinner("Conducting interview session and generating assessment..."):
                         res = api.call("POST", f"/applications/{app_id}/conduct-interview")
                         if res:
                             api.flash("success", "Workflow Advanced", "Interview completed and assessment generated successfully.")
                             st.rerun()
 
-    # 5. Inspection tabs for pre-interview candidate details
-    tabs = st.tabs(["Resume Profile & Information", "Identity Check History"])
-    with tabs[0]:
-        profile_tab(rep)
-    with tabs[1]:
-        if rep.get("identity_log"):
-            identity_table(rep["identity_log"])
-        else:
-            C.empty_state("No Identity Checks Yet", "Identity checks will appear here once candidate undertakes verification.")
+    profile_tab(rep)
 
 
 def completed_report_view(rep, app_id, job, asm):
@@ -199,11 +200,10 @@ def completed_report_view(rep, app_id, job, asm):
     # 3. Organized Tabs
     tabs = st.tabs([
         "Executive Summary",
-        "Competency Performance",
-        "Interview Q&A & Transcript",
-        "Decision Trace",
-        "Candidate Profile & Resume",
-        "Identity Verification"
+        "Competency Breakdown",
+        "Interview Q&A Transcript",
+        "Candidate Feedback Preview",
+        "Candidate Profile"
     ])
 
     with tabs[0]:
@@ -216,16 +216,10 @@ def completed_report_view(rep, app_id, job, asm):
         qa_transcript_tab(rep, job)
 
     with tabs[3]:
-        trace_tab(rep, job)
+        feedback_preview_tab(rep, asm)
 
     with tabs[4]:
         profile_tab(rep)
-
-    with tabs[5]:
-        if rep.get("identity_log"):
-            identity_table(rep["identity_log"])
-        else:
-            C.empty_state("No Identity Checks Logged")
 
     # 4. Recruiter's Final Hiring Decision Panel
     decision_panel(rep, app_id)
@@ -235,7 +229,6 @@ def summary_tab(asm, rep):
     is_real_llm = rep.get("llm_mode") != "demo" and asm.get("source") != "demo_rules"
     label, tone = H.RECOMMENDATION.get(asm.get("label"), (asm.get("label", "Neutral"), "neutral"))
 
-    # Requirement 9: AI recommendation ONLY when actual LLM assessment is configured
     if is_real_llm:
         with st.container(border=True):
             st.markdown("#### AI Recommendation (Advisory Only)")
@@ -249,254 +242,170 @@ def summary_tab(asm, rep):
             st.write(asm.get("recommendation_rationale", ""))
             st.caption("⚠️ Real LLM assessment is not active. This benchmark is derived from deterministic score cutoffs, NOT AI reasoning.")
 
-    C.callout(
-        "neutral",
-        "Recruiter Authority Principle",
-        "The recruiter always retains final hiring authority. All recommendations and benchmarks remain non-binding decision support."
-    )
+    with st.container(border=True):
+        st.markdown("#### Recruiter Executive Summary")
+        st.write(asm.get("recruiter_summary", "No summary provided."))
 
-    st.markdown("#### Assessment Summary")
-    st.write(asm.get("recruiter_summary", "No recruiter summary available."))
-
-    col_s, col_w = st.columns(2)
-    with col_s:
-        st.markdown("**Demonstrated Strengths**")
-        for s in asm.get("strengths") or ["None highlighted"]:
-            st.markdown(f"- {s}")
-    with col_w:
-        st.markdown("**Weaknesses & Gaps**")
-        for w in asm.get("weaknesses") or ["None highlighted"]:
-            st.markdown(f"- {w}")
-
-    # Competency gaps / unassessed warnings
-    gaps = [r["name"] for r in asm.get("competency_table", []) if r.get("interview_score") is None]
-    if gaps:
-        C.callout(
-            "info",
-            "Competencies Not Covered in Interview",
-            "The interview probed highest-priority planned competencies. These were scored from resume only: " +
-            ", ".join(gaps) + ". Their weight is excluded from interview score."
-        )
-
-    for f in asm.get("flags", []):
-        tone = "warning" if "DEMO" in f or "NOT assessed" in f else "info"
-        C.callout(tone, f)
+    c1, c2 = st.columns(2)
+    with c1:
+        with st.container(border=True):
+            st.markdown("#### Key Strengths")
+            for s in asm.get("strengths", []):
+                st.markdown(f"• {s}")
+    with c2:
+        with st.container(border=True):
+            st.markdown("#### Areas for Growth")
+            for w in asm.get("weaknesses", []):
+                st.markdown(f"• {w}")
 
 
 def competency_tab(rep, asm, job):
-    rs = {s["competency_id"]: s for s in rep.get("resume", {}).get("per_competency", [])}
-    rows = asm.get("competency_table", []) if asm else []
+    table = asm.get("competency_table", [])
+    if not table:
+        C.empty_state("No Competency Table Available")
+        return
 
-    if not rows and job.get("competencies"):
-        rows = [
-            {"competency_id": c["id"], "name": c["name"], "weight": c["weight"],
-             "resume_score": rs.get(c["id"], {}).get("score"), "interview_score": None,
-             "interview_evidence": [], "interview_rationale": "Not assessed in interview."}
-            for c in job["competencies"]
-        ]
+    C.table(
+        [("name", "Competency", "strong"), ("weight", "Weight"), ("resume", "Resume Score"), ("interview", "Interview Score"), ("status", "Evidence Status")],
+        [{"name": row["name"], "weight": row["weight"],
+          "resume": f"{row['resume_score']:.1f}/10" if row.get("resume_score") is not None else "-",
+          "interview": f"{row['interview_score']:.1f}/10" if row.get("interview_score") is not None else "Not assessed",
+          "status": C.badge("Direct Evidence", "success") if (row.get("interview_score") or 0) >= 6 else (C.badge("Partial", "warning") if row.get("interview_score") else C.badge("Pending", "neutral"))}
+         for row in table]
+    )
 
-    # Competency Table
-    table_rows = []
-    for r in rows:
-        table_rows.append({
-            "name": r["name"],
-            "weight": f"{r['weight']:.1f}",
-            "resume": C.score_bar(r.get("resume_score")),
-            "interview": C.score_bar(r.get("interview_score")),
-            "rating": "Strong" if (r.get("interview_score") or 0) >= 7.0 else (
-                "Moderate" if (r.get("interview_score") or 0) >= 5.0 else (
-                    "Limited" if r.get("interview_score") is not None else "Resume Only"
-                )
-            )
-        })
-
-    C.table([
-        ("name", "Competency", "strong"),
-        ("weight", "Weight", "r"),
-        ("resume", "Resume (0-10)"),
-        ("interview", "Interview (0-10)"),
-        ("rating", "Performance Band")
-    ], table_rows)
-
-    st.markdown("---")
-    st.markdown("#### Detailed Competency Evidence & Evaluations")
-
-    for r in rows:
-        with st.expander(f"{r['name']} (Weight: {r['weight']:.1f})", expanded=False):
-            st.markdown("**Resume Evidence & Justification**")
-            s = rs.get(r["competency_id"])
-            if s and s.get("evidence"):
-                st.caption(s.get("justification", ""))
-                for e in s.get("evidence", []):
-                    C.quote(e)
+    st.markdown("#### Verbatim Interview Citations by Competency")
+    for row in table:
+        with st.expander(f"{row['name']} — Interview Score: {row.get('interview_score') or 'N/A'}/10"):
+            st.markdown(f"**Assessor Rationale:** {row.get('interview_rationale', '')}")
+            ev = row.get("interview_evidence", [])
+            if ev:
+                st.markdown("**Verbatim Excerpts:**")
+                for quote in ev:
+                    C.quote(quote)
             else:
-                st.caption("No direct resume evidence found.")
-
-            st.markdown("**Interview Evidence & Evaluation Rationale**")
-            if r.get("interview_evidence"):
-                st.caption(f"**Rationale:** {r.get('interview_rationale', '')}")
-                st.markdown("**Candidate Interview Quotes:**")
-                for e in r.get("interview_evidence", []):
-                    C.quote(e)
-            else:
-                st.caption("Not assessed in the interview." if r.get("interview_score") is None else r.get("interview_rationale", ""))
-
-    for x in (asm or {}).get("extra_competencies_explored", []):
-        comp_name = x['competency_id'].replace('extra_', '').replace('_', ' ').title()
-        C.callout(
-            "success",
-            f"Unplanned Competency Explored: {comp_name}",
-            f"Opened by a BROAD_PIVOT from candidate answer. Score {x['score']:.1f}/10 (reported separately, not part of core weighted score). {x['rationale']}"
-        )
+                st.caption("No specific verbatim quote cited for this competency.")
 
 
 def qa_transcript_tab(rep, job):
-    transcript = rep.get("transcript") or []
+    transcript = rep.get("transcript", [])
     if not transcript:
-        C.empty_state("No Interview Transcript", "Conversation records will appear here once the interview starts.")
+        C.empty_state("No Transcript Available", "Interview transcript was not recorded or interview is pending.")
         return
 
-    # 1. Paired Questions & Candidate Responses
-    st.markdown("#### Interview Questions & Candidate Responses")
-    pairs = []
-    i = 0
-    while i < len(transcript):
-        t = transcript[i]
-        if t.get("role") == "interviewer":
-            q_text = t.get("text", "")
-            comp_id = t.get("competency", "")
-            ans_text = ""
-            if i + 1 < len(transcript) and transcript[i + 1].get("role") == "candidate":
-                ans_text = transcript[i + 1].get("text", "")
-                i += 2
-            else:
-                i += 1
-            pairs.append((len(pairs) + 1, comp_id, q_text, ans_text))
-        else:
-            i += 1
+    st.markdown(f"**Total Conversation Turns:** {len(transcript)}")
+    for turn in transcript:
+        role = turn.get("role", "assistant")
+        text = turn.get("text", "")
+        comp = turn.get("competency", "")
+        with st.chat_message("assistant" if role == "interviewer" else "user"):
+            if comp:
+                st.caption(f"Topic: {comp}")
+            st.write(text)
 
-    for q_num, comp_id, q_text, ans_text in pairs:
-        comp_label = comp_id.replace("_", " ").title() if comp_id else "General"
+
+def feedback_preview_tab(rep, asm):
+    fb = asm.get("candidate_feedback")
+    if not fb:
+        C.empty_state("Candidate Feedback Not Available", "Candidate feedback has not been compiled yet.")
+        return
+
+    st.markdown("#### Candidate Feedback Portal Preview")
+    st.caption("This is the exact constructive feedback displayed to the candidate in their Candidate Portal (private scores and rankings are excluded).")
+
+    with st.container(border=True):
+        st.markdown("**Feedback Summary:**")
+        st.write(fb.get("summary", ""))
+
+    c1, c2 = st.columns(2)
+    with c1:
         with st.container(border=True):
-            col_q, col_badge = st.columns([4, 1])
-            with col_q:
-                st.markdown(f"**Question {q_num}:** {q_text}")
-            with col_badge:
-                C.badge(comp_label, "info", dot=False)
+            st.markdown("**Strengths Recognized:**")
+            for s in fb.get("strengths", []):
+                st.markdown(f"• {s}")
+    with c2:
+        with st.container(border=True):
+            st.markdown("**Areas for Improvement:**")
+            for w in fb.get("weaknesses", []):
+                st.markdown(f"• {w}")
 
-            if ans_text:
-                st.markdown(
-                    f'<div style="background:rgba(22,119,255,0.04);border-left:3px solid var(--primary);'
-                    f'padding:0.7rem 1rem;border-radius:4px;margin-top:0.5rem;">'
-                    f'<b>Candidate Response:</b><br>{C.esc(ans_text)}</div>',
-                    unsafe_allow_html=True
-                )
-            else:
-                st.caption("No response recorded.")
-
-    st.markdown("---")
-    st.markdown("#### Full Chronological Chat Transcript")
-    for t in transcript:
-        with st.chat_message("assistant" if t.get("role") == "interviewer" else "user"):
-            st.write(t.get("text", ""))
-
-
-def trace_tab(rep, job):
-    traces = rep.get("trace") or []
-    if not traces:
-        C.empty_state("No Decision Trace Yet", "Turn-by-turn interviewer decisions appear once the interview starts.")
-        return
-
-    st.caption("Each turn records what the candidate said that triggered the decision, the evaluator rationale, and the question asked.")
-    names = {c["id"]: c["name"] for c in job.get("competencies", [])}
-    C.trace(traces, names)
+    if fb.get("improvement_areas"):
+        with st.container(border=True):
+            st.markdown("**Recommended Practice Areas:**")
+            for imp in fb.get("improvement_areas", []):
+                st.markdown(f"• {imp}")
 
 
 def profile_tab(rep):
-    p = rep.get("profile") or {}
-    C.kv([
-        ("Candidate Name", p.get("name")),
-        ("Email Address", p.get("email")),
-        ("Experience (years)", p.get("experience_years") or "Not stated")
-    ])
+    p = rep.get("profile", {})
+    with st.container(border=True):
+        st.markdown("#### Parsed Resume Profile")
+        C.kv([
+            ("Candidate Name", p.get("name")),
+            ("Email", p.get("email")),
+            ("Phone", p.get("phone")),
+            ("Experience (Years)", str(p.get("experience_years", "Not stated"))),
+        ])
+        if p.get("skills"):
+            st.markdown("##### Extracted Skills")
+            C.badges(*[C.badge(s, "neutral", dot=False) for s in p["skills"]])
+        if p.get("experience"):
+            st.markdown("##### Professional Experience")
+            for ex in p["experience"]:
+                C.quote(ex)
+        if p.get("projects"):
+            st.markdown("##### Projects")
+            for pr in p["projects"]:
+                C.quote(pr)
+        if p.get("education"):
+            st.markdown("##### Education")
+            for ed in p["education"]:
+                C.quote(ed)
 
-    if p.get("skills"):
-        st.markdown("**Skills Extracted From Resume**")
-        C.badges(*[C.badge(s, "neutral", dot=False) for s in p["skills"]])
 
-    if p.get("experience"):
-        st.markdown("**Experience & Roles**")
-        for ex in p["experience"]:
-            C.quote(ex)
-
-    if p.get("projects"):
-        st.markdown("**Projects & Deliverables**")
-        for pr in p["projects"]:
-            C.quote(pr)
-
-    if p.get("education"):
-        st.markdown("**Education**")
-        for ed in p["education"]:
-            C.quote(ed)
-
-    if p.get("summary"):
-        st.markdown("**Professional Summary**")
-        C.quote(p["summary"])
+def trace_tab(rep, job):
+    traces = rep.get("trace", [])
+    if not traces:
+        st.caption("No decision trace recorded.")
+        return
+    for t in traces:
+        with st.container(border=True):
+            st.markdown(f"**Turn {t.get('turn', 0)}:** Decision `{t.get('decision')}` (Source: `{t.get('source')}`)")
+            st.write(f"Reasoning: {t.get('reasoning')}")
+            if t.get("trigger_phrase"):
+                st.caption(f"Trigger: \"{t.get('trigger_phrase')}\"")
+            if t.get("guard_note"):
+                st.caption(f"Supervisor Guard Note: {t.get('guard_note')}")
 
 
 def decision_panel(rep, app_id):
     st.markdown("---")
-    C.section(
-        "Recruiter Final Hiring Decision",
-        "The recruiter always retains final hiring authority. AI recommendations remain advisory decision support."
-    )
+    st.markdown("### Recruiter Hiring Decision")
+    dec_info = rep.get("recruiter_decision")
 
-    d = rep.get("recruiter_decision")
-    if d:
-        dec_name = d.get("decision", "").upper()
-        if dec_name == "ADVANCE":
-            dec_name = "HIRE"
-        tone = {"HIRE": "success", "HOLD": "warning", "REJECT": "error"}.get(dec_name, "neutral")
-        label_text = DECISION_OPTIONS.get(dec_name, (dec_name.title(), ""))[0]
-        C.callout(
-            tone,
-            f"Recorded Hiring Decision: {label_text.upper()}",
-            f"**Notes:** {d.get('notes') or 'No notes recorded.'}\n\n**Decided At:** {H.fmt_dt(d.get('at'))}"
+    if dec_info:
+        st.markdown(
+            f'<div class="iq-callout success">'
+            f'<div><div class="t">Decision Recorded: {dec_info["decision"]}</div>'
+            f'<div class="b">Notes: {dec_info.get("notes") or "None"}<br>'
+            f'Recorded At: {H.fmt_dt(dec_info.get("at"))}</div></div></div>',
+            unsafe_allow_html=True
         )
 
-    if rep.get("status") not in ("ASSESSED", "DECIDED"):
-        C.callout("info", "Decision Locked", "Final decision can be recorded once the candidate interview has been assessed.")
-        return
+    with st.form(f"decision_form_{app_id}"):
+        dec = st.selectbox(
+            "Final Decision",
+            list(DECISION_OPTIONS.keys()),
+            format_func=lambda k: f"{k} - {DECISION_OPTIONS[k][0]} ({DECISION_OPTIONS[k][1]})",
+            index=0 if not dec_info else list(DECISION_OPTIONS.keys()).index(dec_info["decision"]) if dec_info["decision"] in DECISION_OPTIONS else 0
+        )
+        notes = st.text_area("Decision Notes & Offer Recommendation", value=dec_info.get("notes", "") if dec_info else "", placeholder="Justification for hiring decision...")
+        sub = st.form_submit_button("Record Final Decision", type="primary")
 
-    default_choice = "HIRE"
-    if d:
-        prev = d.get("decision", "HIRE").upper()
-        default_choice = "HIRE" if prev in ("HIRE", "ADVANCE") else prev
-
-    choice = st.radio(
-        "Select Hiring Decision",
-        list(DECISION_OPTIONS.keys()),
-        index=list(DECISION_OPTIONS.keys()).index(default_choice) if default_choice in DECISION_OPTIONS else 0,
-        format_func=lambda k: f"{DECISION_OPTIONS[k][0]} - {DECISION_OPTIONS[k][1]}",
-        horizontal=False,
-        key=f"dec_choice_{app_id}"
-    )
-
-    notes = st.text_area(
-        "Recruiter Decision Notes / Justification *",
-        value=d.get("notes", "") if d else "",
-        placeholder="Provide your rationale for hiring, holding, or rejecting this candidate. This note is permanently stored in the hiring audit record.",
-        key=f"decn_{app_id}"
-    )
-
-    col_btn, _ = st.columns([2, 3])
-    with col_btn:
-        btn_label = "Update Hiring Decision" if d else "Record Hiring Decision"
-        if st.button(btn_label, type="primary", key=f"decb_{app_id}", use_container_width=True):
-            if not notes.strip():
-                C.callout("error", "Decision Notes Required", "Please provide a brief justification for your hiring decision.")
-            else:
-                res = api.call("POST", f"/applications/{app_id}/decision", json={"decision": choice, "notes": notes.strip()})
-                if res:
-                    api.flash("success", "Decision Recorded", f"Hiring decision '{DECISION_OPTIONS[choice][0]}' saved successfully.")
-                    st.rerun()
+    if sub:
+        ok, res = api.request("POST", f"/applications/{app_id}/decision", json={"decision": dec, "notes": notes.strip()})
+        if ok:
+            api.flash("success", "Decision Recorded", f"Final decision '{dec}' successfully saved for application #{app_id}.")
+            st.rerun()
+        else:
+            C.callout("error", "Failed to record decision", res)

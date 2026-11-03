@@ -406,8 +406,8 @@ class Supervisor:
 
     def retry_assessment(self, application_id: int) -> dict:
         a = self._app(application_id)
-        if a.status != "ASSESSMENT_FAILED":
-            raise GateViolation(f"assessment retry only valid from ASSESSMENT_FAILED (current: {a.status})")
+        if a.status not in ("ASSESSMENT_FAILED", "INTERVIEW_COMPLETE"):
+            raise GateViolation(f"assessment retry only valid from ASSESSMENT_FAILED or INTERVIEW_COMPLETE (current: {a.status})")
         self.run_assessment(a.id)
         return {"status": a.status}
 
@@ -436,7 +436,7 @@ class Supervisor:
             or AssessmentRow(application_id=a.id)
         try:
             res = self.assessor.assess(ctx)
-        except AgentError as e:
+        except Exception as e:
             row.status, row.error = "FAILED", str(e)
             self.db.add(row)
             if a.status != "ASSESSMENT_FAILED":

@@ -49,7 +49,8 @@ def recruiter_report(db, settings, application_id: int, traces: list) -> dict:
             "final_score": ar.final_score, "weights": jload(ar.weights_json, {}), "label": ar.label,
             "flags": jload(ar.flags_json, []), "competency_table": table, "extra_competencies_explored": extras,
             "recruiter_summary": out.recruiter_summary, "recommendation_rationale": out.recommendation_rationale,
-            "strengths": out.strengths, "weaknesses": out.weaknesses}
+            "strengths": out.strengths, "weaknesses": out.weaknesses,
+            "candidate_feedback": out.candidate_feedback.model_dump() if out.candidate_feedback else None}
     elif ar:
         rep["assessment_error"] = ar.error
     return rep

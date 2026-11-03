@@ -4,7 +4,11 @@ from .. import api, components as C, helpers as H
 
 
 def render():
-    C.page_header("Overview", "Where every candidate stands and what needs your attention next.", "Recruiter workspace")
+    C.page_header(
+        "Dashboard",
+        "High-level hiring pipeline, active job openings, and urgent recruiter action items.",
+        "Recruiter workspace"
+    )
     ov = api.call("GET", "/overview")
     if ov is None:
         return
@@ -24,10 +28,11 @@ def render():
 
     if na:
         left, right = st.columns([4.8, 1.2])
+        target_page = api.PAGE_MAP.get(na["page"], na["page"])
         with left:
             C.callout(na["tone"], "Next Recommended Action", na["label"])
         with right:
-            st.button(f"Go to {na['page']}", on_click=api.go, args=(na["page"],), key="next_open", type="primary", use_container_width=True)
+            st.button(f"Go to {target_page}", on_click=api.go, args=(target_page,), key="next_open", type="primary", use_container_width=True)
     else:
         C.callout("success", "You are all caught up", "No pipeline blocks require immediate recruiter attention.")
 
@@ -55,16 +60,27 @@ def render():
             else:
                 for i, act in enumerate(ov["pending_actions"]):
                     c1, c2 = st.columns([3.8, 1.2])
+                    tgt = api.PAGE_MAP.get(act["page"], act["page"])
                     with c1:
-                        C.badges(C.badge(act["page"], act["tone"], dot=False))
+                        C.badges(C.badge(tgt, act["tone"], dot=False))
                         st.caption(act["label"])
                     with c2:
-                        st.button("Open", key=f"act_{i}", on_click=api.go, args=(act["page"],), use_container_width=True)
+                        st.button("Open", key=f"act_{i}", on_click=api.go, args=(tgt,), use_container_width=True)
 
     C.section("Job Openings Summary", "Live pipeline metrics per job role.")
     C.table([("title", "Job Title", "strong"), ("applicants", "Applicants", "r"), ("scored", "Scored", "r"),
              ("shortlisted", "Shortlisted", "r"), ("completed", "Interviews Done", "r")], ov["per_job"])
-    C.callout("info", "How figures are calculated",
-              "All figures are read live from the database. 'Awaiting review' counts scored candidates not yet shortlisted. "
-              "'Scheduled' counts booked interview slots. Pipeline funnel stages are cumulative.")
 
+    with st.expander("Advanced: Metric Calculations & Pipeline Synchronization"):
+        st.markdown(
+            "**Data Synchronization Rules:**\n"
+            "- All figures are read live from SQLite database records without caching or fabrication.\n"
+            "- **Total Applicants:** Every application record created from an uploaded resume.\n"
+            "- **Awaiting Screening:** Candidates in `PARSED` or `SCORING_FAILED` status.\n"
+            "- **Awaiting Review:** Candidates in `SCORED` status awaiting shortlist confirmation.\n"
+            "- **Shortlisted:** Confirmed shortlisted candidates awaiting calendar scheduling (`SHORTLISTED`).\n"
+            "- **Scheduled:** Booked interview calendar slots (`SCHEDULED`).\n"
+            "- **Identity Reviews:** Open review tickets blocking candidate interview access (`HUMAN_REVIEW`).\n"
+            "- **Completed Interviews:** Completed interviews undergoing or finished assessment (`INTERVIEW_COMPLETE`, `ASSESSED`, `DECIDED`).\n"
+            "- **Awaiting Decision:** Assessed candidates awaiting recruiter decision (`ASSESSED`)."
+        )
