@@ -41,7 +41,8 @@ def render():
             "success",
             f"Operating in LLM-Powered Mode ({provider.upper()})",
             f"Connected to external provider '{provider}' using model '{model_name or 'Default'}'. "
-            "Recruitment, Interviewer, and Assessment agents run live inferences with structured Pydantic schema validation."
+            "Recruitment, Interviewer, and Assessment agents run live inferences with structured Pydantic schema validation. "
+            "Note: Previously evaluated candidate records retain their original scoring label (e.g. 'Demo Rules') until rescored from the Candidates page."
         )
 
     # 2. Key Metrics Grid

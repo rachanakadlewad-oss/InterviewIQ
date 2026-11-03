@@ -10,6 +10,11 @@ except Exception:  # pragma: no cover
     pass
 
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_DATA_DIR = str(BASE_DIR / "runtime")
+DEFAULT_DB_URL = f"sqlite:///{str(BASE_DIR / 'runtime' / 'interviewiq.db').replace(chr(92), '/')}"
+
+
 def _f(name, default):
     return float(os.getenv(name, default))
 
@@ -50,13 +55,34 @@ class Settings:
     identity_backend: str = "demo"
     identity_match_threshold: float = 0.70
 
-    data_dir: str = "./runtime"
-    database_url: str = "sqlite:///./runtime/interviewiq.db"
+    data_dir: str = DEFAULT_DATA_DIR
+    database_url: str = DEFAULT_DB_URL
     enforce_slot_time: bool = False
     recruiter_api_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
+        raw_data_dir = os.getenv("DATA_DIR", DEFAULT_DATA_DIR)
+        data_path = Path(raw_data_dir)
+        if not data_path.is_absolute():
+            data_path = (BASE_DIR / data_path).resolve()
+
+        raw_db_url = os.getenv("DATABASE_URL", "")
+        if raw_db_url:
+            if raw_db_url.startswith("sqlite:///./"):
+                rel = raw_db_url[len("sqlite:///./"):]
+                db_url = f"sqlite:///{str((BASE_DIR / rel).resolve()).replace(chr(92), '/')}"
+            elif raw_db_url.startswith("sqlite:///") and not raw_db_url.startswith("sqlite:///:memory:"):
+                sub = raw_db_url[len("sqlite:///"):]
+                if not Path(sub).is_absolute():
+                    db_url = f"sqlite:///{str((BASE_DIR / sub).resolve()).replace(chr(92), '/')}"
+                else:
+                    db_url = raw_db_url
+            else:
+                db_url = raw_db_url
+        else:
+            db_url = f"sqlite:///{str(data_path / 'interviewiq.db').replace(chr(92), '/')}"
+
         s = cls(
             llm_provider=os.getenv("LLM_PROVIDER", "demo").strip().lower(),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
@@ -78,8 +104,8 @@ class Settings:
             min_questions_before_conclude=_i("MIN_QUESTIONS_BEFORE_CONCLUDE", 4),
             identity_backend=os.getenv("IDENTITY_BACKEND", "demo").strip().lower(),
             identity_match_threshold=_f("IDENTITY_MATCH_THRESHOLD", 0.70),
-            data_dir=os.getenv("DATA_DIR", "./runtime"),
-            database_url=os.getenv("DATABASE_URL", "sqlite:///./runtime/interviewiq.db"),
+            data_dir=str(data_path),
+            database_url=db_url,
             enforce_slot_time=_b("ENFORCE_SLOT_TIME", False),
             recruiter_api_key=os.getenv("RECRUITER_API_KEY", ""),
         )

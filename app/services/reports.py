@@ -52,6 +52,7 @@ def recruiter_report(db, settings, application_id: int, traces: list) -> dict:
             "strengths": out.strengths, "weaknesses": out.weaknesses,
             "candidate_feedback": out.candidate_feedback.model_dump() if out.candidate_feedback else None}
     elif ar:
+        rep["assessment_status"] = ar.status
         rep["assessment_error"] = ar.error
     return rep
 
@@ -68,9 +69,21 @@ def level_label(score: float) -> str:
 def candidate_feedback(db, application_id: int) -> dict:
     """Candidate-facing: strengths / weaknesses / improvement areas only. No scores, rank, or hiring decision."""
     a = db.get(Application, application_id)
+    if not a:
+        return {"available": False, "status": "NOT_FOUND", "message": "Application record not found."}
     ar = db.execute(select(AssessmentRow).where(AssessmentRow.application_id == a.id)).scalar_one_or_none()
     if not ar or ar.status != "OK":
-        return {"available": False, "message": "Your feedback is not ready yet."}
+        if a.status in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED"):
+            return {
+                "available": False,
+                "status": "PROCESSING" if a.status == "INTERVIEW_COMPLETE" else "FAILED",
+                "message": "Your interview has completed. Your personalized competency feedback is currently being finalized. Please check back shortly.",
+            }
+        return {
+            "available": False,
+            "status": "NOT_READY",
+            "message": "Your feedback will be accessible here once you complete your interview session."
+        }
     out = AssessmentOutput.model_validate_json(ar.output_json)
     fb = out.candidate_feedback
     job_row = db.get(Job, a.job_id)

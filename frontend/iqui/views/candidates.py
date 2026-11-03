@@ -79,14 +79,27 @@ def upload_section(job_id):
 
 def screening_section(job_id):
     C.section("2. Score & Rank Resumes", "Evaluate evidence against rubrics, compute weighted scores (0-100), and rank candidates.")
+    cfg = api.config() or {}
+    is_live_llm = not cfg.get("demo_llm", True)
+
     with st.container(border=True):
         apps = api.call("GET", f"/jobs/{job_id}/applications") or []
         todo = [a for a in apps if a["status"] in ("PARSED", "SCORING_FAILED")]
         scored_apps = [a for a in apps if a["resume_score"] is not None]
+        demo_scored = [a for a in scored_apps if a.get("scoring_source") == "demo_rules"]
 
-        c1, c2, c3 = st.columns([1.5, 1.5, 3])
+        if is_live_llm and demo_scored:
+            C.callout(
+                "info",
+                f"{len(demo_scored)} candidate(s) evaluated under Demo Rules",
+                "These candidates were scored using heuristic demo rules before LLM mode was activated. "
+                "Click 'Rescore with Active LLM' to evaluate them using genuine AI reasoning with the configured model."
+            )
+
+        c1, c2, c3 = st.columns([1.5, 2.0, 2.5])
         score_clicked = c1.button(f"Score {len(todo)} resume(s)" if todo else "All scored", type="primary", disabled=not todo, use_container_width=True)
-        rescore_clicked = c2.button("Rescore all & re-rank", disabled=not scored_apps, help="Recalculate competency scores and update rankings.", use_container_width=True)
+        rescore_lbl = "Rescore with Active LLM" if (is_live_llm and demo_scored) else "Rescore all & re-rank"
+        rescore_clicked = c2.button(rescore_lbl, disabled=not scored_apps, help="Recalculate competency scores with active model.", use_container_width=True)
         c3.caption(f"{len(scored_apps)} scored / {len(apps)} total applicants. Scoring calibrates direct, partial, and missing evidence.")
 
         if score_clicked:

@@ -311,7 +311,8 @@ def render_passed_candidates(candidates, threshold):
                     st.caption(f"Email: {cand.get('email')}")
 
             verified_time = H.fmt_dt(latest_check["timestamp"]) if latest_check else "-"
-            conf_display = f"{latest_check.get('confidence', 0.0):.2f} (min: {latest_check.get('threshold', threshold):.2f})" if latest_check and not is_override else "Manual Pass"
+            conf_num = latest_check.get("confidence") if latest_check and latest_check.get("confidence") is not None else (latest_check.get("match_confidence", 0.0) if latest_check else 0.0)
+            conf_display = "Manual Override (N/A)" if is_override else f"{conf_num:.2f} (min: {latest_check.get('threshold', threshold):.2f})"
 
             C.kv([
                 ("Status", cand.get("application_status", "IDENTITY_PASSED")),
@@ -385,23 +386,34 @@ def identity_history_table(checks):
     for c in checks:
         is_pass = c.get("passed", False)
         is_inconcl = c.get("inconclusive", False)
-        is_override = c.get("human_override", False)
+        is_override = bool(
+            c.get("human_override")
+            or c.get("backend") == "human_reviewer"
+            or c.get("check_type") == "human_review"
+            or "OVERRIDE" in str(c.get("reason", "")).upper()
+        )
+
+        conf_num = c.get("confidence") if c.get("confidence") is not None else c.get("match_confidence", 0.0)
 
         if is_override:
             res_b = C.badge("Manual Pass", "success") if is_pass else C.badge("Manual Decision", "neutral")
+            conf_display = "Manual Override (N/A)"
         elif is_pass:
             res_b = C.badge("Passed", "success")
+            conf_display = f"{conf_num:.2f} / {c.get('threshold', 0.0):.2f}"
         elif is_inconcl:
             res_b = C.badge("Inconclusive", "warning")
+            conf_display = f"{conf_num:.2f} / {c.get('threshold', 0.0):.2f}"
         else:
             res_b = C.badge("Failed", "error")
+            conf_display = f"{conf_num:.2f} / {c.get('threshold', 0.0):.2f}"
 
         rows.append({
             "t": H.fmt_dt(c.get("timestamp")),
             "type": (c.get("check_type") or "check").replace("_", " ").title(),
-            "backend": c.get("backend", "-"),
+            "backend": "Recruiter Override" if is_override else c.get("backend", "-"),
             "faces": str(c.get("face_count", 0)),
-            "conf": f"{c.get('confidence', 0.0):.2f} / {c.get('threshold', 0.0):.2f}" if not is_override else "-",
+            "conf": conf_display,
             "res": res_b,
             "why": c.get("reason", "-")
         })

@@ -1,48 +1,199 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
- body{font-family:"Inter","Segoe UI",system-ui,sans-serif;margin:0;padding:4px 0;color:#F5F7FB;background:transparent}
- button{padding:9px 16px;border:1px solid #26344B;border-radius:8px;background:#172033;color:#F5F7FB;font-size:14px;font-weight:550;cursor:pointer;margin-right:8px;transition:background .15s,border-color .15s}
+ body{font-family:"Inter","Segoe UI",system-ui,sans-serif;margin:0;padding:6px 0;color:#F5F7FB;background:transparent}
+ .actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+ button{padding:9px 16px;border:1px solid #26344B;border-radius:8px;background:#172033;color:#F5F7FB;font-size:14px;font-weight:550;cursor:pointer;transition:background .15s,border-color .15s}
  button:hover{border-color:#4094FF;background:#1B2842}
  button:focus-visible{outline:2px solid #4094FF;outline-offset:2px}
  button#rec{background:#1677FF;border-color:#1677FF}button#rec:hover{background:#4094FF;border-color:#4094FF}
- button.stop{background:#EF4444!important;border-color:#EF4444!important}
- #t{margin-top:10px;padding:10px 12px;background:#0E1626;border:1px solid #26344B;border-radius:8px;min-height:22px;font-size:14px;color:#AAB8CC}
+ button.recording{background:#EF4444!important;border-color:#EF4444!important;animation:pulse 1.5s infinite}
+ @keyframes pulse{0%{opacity:1}50%{opacity:0.85}100%{opacity:1}}
+ #status-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:12px;background:#1E293B;color:#94A3B8}
+ #status-badge.live{background:#450A0A;color:#FCA5A5}
+ #status-badge.ready{background:#064E3B;color:#6EE7B7}
+ #t{margin-top:10px;padding:10px 14px;background:#0E1626;border:1px solid #26344B;border-radius:8px;min-height:32px;font-size:14px;line-height:1.5;color:#E2E8F0;word-break:break-word}
  #s{font-size:12px;color:#8290A5;margin-top:6px}
 </style></head><body>
-<div><button id="speak">Replay question</button><button id="rec">Answer by voice</button></div>
-<div id="t"></div><div id="s"></div>
+<div class="actions">
+  <button id="speak">🔊 Replay question</button>
+  <button id="rec">🎙️ Start speaking</button>
+  <button id="clear" style="display:none">Clear</button>
+  <span id="status-badge">⚪ Mic ready</span>
+</div>
+<div id="t" style="display:none"></div>
+<div id="s">Click "Start speaking" to answer by voice (Chrome / Edge), or type directly in the box below.</div>
 <script>
-// Minimal Streamlit bidirectional component (no build step). Speech-to-text and text-to-speech are done by the
-// BROWSER (Web Speech API): STT works in Chrome/Edge only; TTS in all major browsers. Text input is the fallback.
 const send = (type, data) => window.parent.postMessage(Object.assign({isStreamlitMessage:true, type}, data), "*");
 const $ = id => document.getElementById(id);
-let question = "", nonce = "", rec = null, listening = false, lastSpoken = "";
+let question = "", nonce = "", rec = null, listening = false, userExplicitStop = false, lastTranscript = "";
+let accumulatedFinal = "", currentInterim = "";
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-function setHeight(){ send("streamlit:setFrameHeight", {height: 110}); }
+
+function setHeight(){
+  const h = document.body.scrollHeight || 130;
+  send("streamlit:setFrameHeight", {height: Math.max(h + 10, 130)});
+}
+
+function updateBadge(state, text){
+  const b = $("status-badge");
+  b.className = state;
+  b.textContent = text;
+}
+
 function speak(){
-  if(!("speechSynthesis" in window) || !question){ $("s").textContent = "Text-to-speech unavailable - read the question above."; return; }
+  if(!("speechSynthesis" in window) || !question){
+    $("s").textContent = "Text-to-speech unavailable in this browser. Please read the question above.";
+    return;
+  }
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(question); u.rate = 0.97; speechSynthesis.speak(u);
+  const u = new SpeechSynthesisUtterance(question);
+  u.rate = 0.98;
+  speechSynthesis.speak(u);
 }
+
+function initRecognizer(){
+  if(!SR) return null;
+  const r = new SR();
+  r.lang = "en-US";
+  r.interimResults = true;
+  r.continuous = true;
+
+  r.onresult = e => {
+    let interim = "";
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const res = e.results[i];
+      if(res.isFinal){
+        accumulatedFinal += (accumulatedFinal ? " " : "") + res[0].transcript.trim();
+      } else {
+        interim += res[0].transcript;
+      }
+    }
+    currentInterim = interim.trim();
+    const display = accumulatedFinal + (currentInterim ? (accumulatedFinal ? " " : "") + currentInterim : "");
+    $("t").style.display = "block";
+    $("t").textContent = display;
+    $("s").textContent = "Recording in progress... Click 'Done speaking' when finished.";
+    setHeight();
+  };
+
+  r.onerror = e => {
+    if(e.error === "no-speech"){
+      // Natural thinking pause; keep listening if not explicitly stopped
+      return;
+    }
+    if(e.error === "not-allowed" || e.error === "service-not-allowed"){
+      $("s").textContent = "Microphone access blocked. Please allow mic permission in browser settings, or type your answer below.";
+      stopSession(false);
+      updateBadge("", "⚠️ Mic blocked");
+      return;
+    }
+    $("s").textContent = "Mic notice: " + e.error + ". You can keep speaking or type below.";
+  };
+
+  r.onend = () => {
+    if(listening && !userExplicitStop){
+      // Browser paused due to silence while user is thinking; restart seamlessly
+      try {
+        r.start();
+      } catch(err){
+        stopSession(true);
+      }
+    } else {
+      stopSession(true);
+    }
+  };
+
+  return r;
+}
+
 function startRec(){
-  if(!SR){ $("s").textContent = "Speech recognition is not supported in this browser (use Chrome or Edge) - type your answer below."; return; }
+  if(!SR){
+    $("s").textContent = "Speech recognition is not supported in this browser (use Chrome or Edge). You can type your answer below.";
+    updateBadge("", "⚠️ Browser unsupported");
+    return;
+  }
   speechSynthesis.cancel();
-  rec = new SR(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = true;
-  let finalText = "";
-  rec.onresult = e => { let interim = ""; for(let i=e.resultIndex;i<e.results.length;i++){ const r=e.results[i]; if(r.isFinal) finalText += r[0].transcript + " "; else interim += r[0].transcript; } $("t").textContent = finalText + interim; };
-  rec.onerror = e => { $("s").textContent = "Mic error: " + e.error + " (allow microphone access, or type your answer)."; stopUI(); };
-  rec.onend = () => { if(listening){ listening=false; stopUI(); if(finalText.trim()) send("streamlit:setComponentValue", {value:{transcript: finalText.trim(), ts: Date.now()}, dataType:"json"}); } };
-  rec.start(); listening = true; $("rec").textContent = "Stop and use answer"; $("rec").className = "stop"; $("s").textContent = "Listening...";
+  userExplicitStop = false;
+  accumulatedFinal = "";
+  currentInterim = "";
+  $("t").textContent = "";
+  $("t").style.display = "none";
+
+  try {
+    rec = initRecognizer();
+    rec.start();
+    listening = true;
+    $("rec").textContent = "⏹️ Done speaking (Use answer)";
+    $("rec").className = "recording";
+    $("clear").style.display = "inline-block";
+    updateBadge("live", "🔴 Listening...");
+    $("s").textContent = "Listening... Speak your answer clearly. Pauses for thinking are supported.";
+    setHeight();
+  } catch(e){
+    $("s").textContent = "Could not activate microphone: " + e.message;
+    updateBadge("", "⚠️ Mic error");
+  }
 }
-function stopUI(){ $("rec").textContent = "Answer by voice"; $("rec").className = ""; }
-$("rec").onclick = () => { if(listening){ rec.stop(); } else { startRec(); } };
+
+function stopSession(deliverResult){
+  listening = false;
+  $("rec").textContent = "🎙️ Start speaking";
+  $("rec").className = "";
+  updateBadge("ready", "🟢 Ready");
+
+  const full = (accumulatedFinal + (currentInterim ? (accumulatedFinal ? " " : "") + currentInterim : "")).trim();
+  if(deliverResult && full && full !== lastTranscript){
+    lastTranscript = full;
+    $("s").textContent = "Speech transcribed. You can edit the text in the answer box below before submitting.";
+    send("streamlit:setComponentValue", {value: {transcript: full, ts: Date.now()}, dataType: "json"});
+  } else if(!full){
+    $("s").textContent = "No speech detected. Click 'Start speaking' to try again, or type below.";
+  }
+  setHeight();
+}
+
+$("rec").onclick = () => {
+  if(listening){
+    userExplicitStop = true;
+    try { rec.stop(); } catch(e){}
+    stopSession(true);
+  } else {
+    startRec();
+  }
+};
+
 $("speak").onclick = speak;
+
+$("clear").onclick = () => {
+  accumulatedFinal = "";
+  currentInterim = "";
+  $("t").textContent = "";
+  $("t").style.display = "none";
+  $("clear").style.display = "none";
+  $("s").textContent = "Cleared. Click 'Start speaking' to record again.";
+  setHeight();
+};
+
 window.addEventListener("message", ev => {
   if(ev.data.type !== "streamlit:render") return;
-  const a = ev.data.args; question = a.question || "";
-  if(a.nonce !== nonce){ nonce = a.nonce; $("t").textContent = ""; if(a.autospeak) speak(); }   // speak each new question once
+  const a = ev.data.args;
+  question = a.question || "";
+  if(a.nonce !== nonce){
+    nonce = a.nonce;
+    accumulatedFinal = "";
+    currentInterim = "";
+    lastTranscript = "";
+    $("t").textContent = "";
+    $("t").style.display = "none";
+    $("clear").style.display = "none";
+    $("s").textContent = "Click 'Start speaking' to answer by voice, or type directly in the box below.";
+    updateBadge("", "⚪ Mic ready");
+    if(a.autospeak) speak();
+  }
   setHeight();
 });
-send("streamlit:componentReady", {apiVersion:1}); setHeight();
+
+send("streamlit:componentReady", {apiVersion: 1});
+setHeight();
 </script></body></html>

@@ -47,6 +47,7 @@ def load_calendar(db, path, now: Optional[datetime] = None) -> int:
         if overlap is not None:
             continue
         db.add(Slot(id=sid, resource=res, start=st, end=en))
+        db.flush()
         added += 1
     db.commit()
     return added
@@ -106,6 +107,7 @@ def generate_slots(db, now: Optional[datetime] = None, working_days: int = 5, re
                     if overlap is not None:
                         continue
                     db.add(Slot(id=sid, resource=res, start=start, end=end))
+                    db.flush()
                     added += 1
             produced += 1
         day += timedelta(days=1)

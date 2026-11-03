@@ -1,6 +1,9 @@
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # Add interviewiq root to sys.path
 sys.path.insert(0, r"c:\Users\mkadl\Downloads\InterviewIQ-Working\interviewiq")
 

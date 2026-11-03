@@ -143,6 +143,22 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             raise NotFound("job not found")
         return {"id": j.id, "title": j.title, "description": j.description, "competencies": jload(j.competencies_json, [])}
 
+    class JobUpdateIn(BaseModel):
+        title: Optional[str] = None
+        description: Optional[str] = None
+
+    @app.patch("/jobs/{job_id}", dependencies=[Depends(recruiter)])
+    def update_job(job_id: int, body: JobUpdateIn, db=Depends(get_db)):
+        j = db.get(Job, job_id)
+        if not j:
+            raise NotFound("job not found")
+        if body.title is not None and body.title.strip():
+            j.title = body.title.strip()
+        if body.description is not None:
+            j.description = body.description.strip()
+        db.commit()
+        return {"id": j.id, "title": j.title, "description": j.description}
+
     # ------------------------------------------------------------ resumes
     @app.post("/jobs/{job_id}/applications", dependencies=[Depends(recruiter)])
     async def upload_resume(job_id: int, file: UploadFile = File(...), photo: Optional[UploadFile] = File(None),

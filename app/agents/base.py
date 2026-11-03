@@ -82,8 +82,13 @@ def run_agent(*, name: str, llm: BaseLLM, system: str, payload: dict, out_model:
             last_err = f"service error: {e}"
             log.warning("%s attempt %d service failure: %s", name, attempt, e)
             sleep_time = (backoff or 0.5) * attempt
-            if "429" in str(e) or "too many requests" in str(e).lower() or "rate" in str(e).lower():
-                sleep_time = max(sleep_time, 2.5 * attempt)
+            err_str = str(e)
+            if "429" in err_str or "too many requests" in err_str.lower() or "rate" in err_str.lower():
+                m = re.search(r"try again in (\d+\.?\d*)\s*s", err_str, re.IGNORECASE)
+                if m:
+                    sleep_time = float(m.group(1)) + 0.5
+                else:
+                    sleep_time = max(sleep_time, 4.0 * attempt)
             if sleep_time:
                 time.sleep(sleep_time)
         except (ValidationError, ValueError) as e:   # invalid output: tell the model what was wrong

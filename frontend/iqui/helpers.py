@@ -95,16 +95,16 @@ def recruiter_workflow_steps(status: str) -> List[Tuple[str, str]]:
     """Return [(label, state)] for the recruiter assessment workflow pipeline."""
     curr_idx = {
         "PARSED": 0, "SCORING_FAILED": 0, "SCORED": 0, "SHORTLISTED": 0,
-        "SCHEDULED": 1,
+        "SCHEDULED": 0,
         "HUMAN_REVIEW": 1,
         "REJECTED_AT_REVIEW": 1,
-        "IDENTITY_PASSED": 2,
+        "IDENTITY_PASSED": 1,
         "INTERVIEW_IN_PROGRESS": 2,
         "INTERVIEW_COMPLETE": 3,
         "ASSESSMENT_FAILED": 3,
-        "ASSESSED": 5,
-        "DECIDED": 6
-    }.get(status, 1)
+        "ASSESSED": 4,
+        "DECIDED": 5
+    }.get(status, 0)
 
     out = []
     for i, label in enumerate(RECRUITER_STAGES):

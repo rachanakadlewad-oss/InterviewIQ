@@ -266,7 +266,8 @@ class Supervisor:
                                          confidence=0.0, threshold=self.s.identity_match_threshold))
             idsvc.append_identity_log(self.s, a.id, IdentityResult(
                 timestamp=idsvc._now(), check_type="human_review", backend="human_reviewer", passed=True,
-                reason=f"HUMAN OVERRIDE: {notes}", threshold=self.s.identity_match_threshold, face_count=1, face_detected=True, single_face=True))
+                human_override=True, reason=f"HUMAN OVERRIDE: {notes}",
+                threshold=self.s.identity_match_threshold, face_count=1, face_detected=True, single_face=True))
             if sess and sess.status == "SUSPENDED":
                 st = SessionState.model_validate_json(sess.state_json)
                 st.status, sess.status = "ACTIVE", "ACTIVE"

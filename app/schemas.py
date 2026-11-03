@@ -186,3 +186,4 @@ class IdentityResult(BaseModel):
     inconclusive: bool = False
     reason: str = ""
     warning: str = ""
+    human_override: bool = False

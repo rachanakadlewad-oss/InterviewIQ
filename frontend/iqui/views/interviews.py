@@ -136,7 +136,13 @@ def scheduling_tab(job_id: int, job_title: str, cfg: dict):
         if days:
             st.markdown("##### Day Schedule Breakdown")
             pick_day = st.selectbox("Select day", days, format_func=lambda d: date.fromisoformat(d).strftime("%A %d %B %Y"), key="interviews_cal_day")
-            day_slots = [s for s in slots if s["start"].startswith(pick_day)]
+            raw_day_slots = [s for s in slots if s["start"].startswith(pick_day)]
+            dedup_map = {}
+            for s in raw_day_slots:
+                key = (s["resource"], s["start"], s["end"])
+                if key not in dedup_map or (s.get("application_id") and not dedup_map[key].get("application_id")):
+                    dedup_map[key] = s
+            day_slots = list(dedup_map.values())
             day_slots.sort(key=lambda s: (s["start"], s["resource"], s["id"]))
             C.table(
                 [("t", "Time", "strong"), ("room", "Resource"), ("state", "State"), ("job", "Job Position")],

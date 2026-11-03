@@ -124,10 +124,19 @@ def pending_interview_view(rep, app_id, job):
     w_int = cfg_weights.get("interview", 0.6)
 
     # 1. Scores Grid
+    int_score_val = "Pending"
+    int_score_hint = "Awaiting interview session"
+    if rep["status"] == "INTERVIEW_COMPLETE":
+        int_score_val = "Ready"
+        int_score_hint = "Ready for assessment generation"
+    elif rep["status"] == "ASSESSMENT_FAILED":
+        int_score_val = "Failed"
+        int_score_hint = "Assessment failed - retry available"
+
     C.metric_grid([
         {"label": f"Resume Score ({w_res * 100:.0f}%)", "value": f"{resume_score:.1f}", "hint": f"Rank #{rep['resume']['rank'] or '-'} · Out of 100"},
-        {"label": f"Interview Score ({w_int * 100:.0f}%)", "value": "Pending", "hint": "Awaiting interview session"},
-        {"label": "Final Weighted Score", "value": "Pending", "hint": f"Calculated after interview assessment"},
+        {"label": f"Interview Score ({w_int * 100:.0f}%)", "value": int_score_val, "hint": int_score_hint},
+        {"label": "Final Weighted Score", "value": "Pending", "hint": "Calculated after interview assessment"},
     ])
 
     # 2. Configured Formula Banner
@@ -149,10 +158,14 @@ def pending_interview_view(rep, app_id, job):
         "HUMAN_REVIEW": "Candidate is currently blocked in Identity Review queue.",
         "IDENTITY_PASSED": "Identity verification has passed. Candidate is ready for the interview session.",
         "INTERVIEW_IN_PROGRESS": "The interview session is currently in progress.",
+        "INTERVIEW_COMPLETE": "The candidate has completed their interview session. Click 'Generate Assessment' below to evaluate answers against competency rubrics.",
+        "ASSESSMENT_FAILED": "Interview was completed, but automated assessment generation encountered an error. Click 'Retry Assessment' below to re-evaluate.",
         "REJECTED_AT_REVIEW": "Application was closed at identity review stage.",
     }
     explanation = status_messages.get(rep["status"], "Interview assessment has not been completed yet.")
-    C.callout("info", "No Interview Assessment Yet", explanation)
+    callout_tone = "error" if rep["status"] == "ASSESSMENT_FAILED" else ("warning" if rep["status"] == "INTERVIEW_COMPLETE" else "info")
+    callout_title = "Assessment Generation Required" if rep["status"] in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED") else "No Interview Assessment Yet"
+    C.callout(callout_tone, callout_title, explanation)
 
     # 4. Interactive Action: Conduct Interview & Generate Assessment
     if rep["status"] in ("SCHEDULED", "IDENTITY_PASSED", "INTERVIEW_IN_PROGRESS"):
@@ -166,6 +179,19 @@ def pending_interview_view(rep, app_id, job):
                         res = api.call("POST", f"/applications/{app_id}/conduct-interview")
                         if res:
                             api.flash("success", "Workflow Advanced", "Interview completed and assessment generated successfully.")
+                            st.rerun()
+    elif rep["status"] in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED"):
+        with st.container(border=True):
+            st.markdown("#### Generate Candidate Assessment")
+            st.write("The interview session has been recorded. Run the Assessment Agent to score competencies, cite evidence, and compute the final score.")
+            col_act, _ = st.columns([2, 3])
+            with col_act:
+                btn_lbl = "Retry Assessment Generation" if rep["status"] == "ASSESSMENT_FAILED" else "Generate Competency Assessment"
+                if st.button(btn_lbl, type="primary", use_container_width=True, key=f"btn_run_asm_{app_id}"):
+                    with st.spinner("Evaluating interview responses against job competencies..."):
+                        res = api.call("POST", f"/applications/{app_id}/assessment/retry")
+                        if res:
+                            api.flash("success", "Assessment Completed", "Competency scores and candidate feedback generated successfully.")
                             st.rerun()
 
     profile_tab(rep)

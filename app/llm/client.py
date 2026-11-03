@@ -44,7 +44,10 @@ class OpenAICompatLLM(BaseLLM):
         if not model:
             raise ValueError("LLM_MODEL must be set for the openai provider")
         self.api_key, self.model, self.timeout = api_key, model, timeout
-        self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        clean_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        if clean_url.endswith("/chat/completions"):
+            clean_url = clean_url[:-len("/chat/completions")].rstrip("/")
+        self.base_url = clean_url
 
     def complete(self, system, user):
         payload = {
@@ -65,9 +68,13 @@ class OpenAICompatLLM(BaseLLM):
             if r.status_code == 400 and ("response_format" in r.text or "json_object" in r.text):
                 payload.pop("response_format", None)
                 r = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=self.timeout)
-            r.raise_for_status()
+            if not r.ok:
+                detail = r.text[:300]
+                raise LLMError(f"HTTP {r.status_code} ({r.reason}) calling {self.base_url}/chat/completions [model={self.model}]: {detail}")
             text = r.json()["choices"][0]["message"]["content"]
         except Exception as e:  # network, HTTP, parsing
+            if isinstance(e, LLMError):
+                raise
             raise LLMError(f"openai-compatible call failed: {e}") from e
         if not text or not text.strip():
             raise LLMError("empty LLM response")
@@ -105,9 +112,13 @@ class AnthropicLLM(BaseLLM):
                       "messages": [{"role": "user", "content": user}]},
                 timeout=self.timeout,
             )
-            r.raise_for_status()
+            if not r.ok:
+                detail = r.text[:300]
+                raise LLMError(f"HTTP {r.status_code} ({r.reason}) calling Anthropic API [model={self.model}]: {detail}")
             text = "".join(b.get("text", "") for b in r.json()["content"] if b.get("type") == "text")
         except Exception as e:
+            if isinstance(e, LLMError):
+                raise
             raise LLMError(f"anthropic call failed: {e}") from e
         if not text.strip():
             raise LLMError("empty LLM response")
