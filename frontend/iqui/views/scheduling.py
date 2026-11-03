@@ -249,7 +249,13 @@ def calendar_section(job_id):
         if days:
             st.markdown("##### Day Schedule Breakdown")
             pick = st.selectbox("View day schedule", days, format_func=lambda d: date.fromisoformat(d).strftime("%A %d %B %Y"), key="cal_pick_day")
-            day_slots = [s for s in slots if s["start"].startswith(pick)]
+            raw_day_slots = [s for s in slots if s["start"].startswith(pick)]
+            dedup_map = {}
+            for s in raw_day_slots:
+                key = (s["resource"], s["start"], s["end"])
+                if key not in dedup_map or (s.get("application_id") and not dedup_map[key].get("application_id")):
+                    dedup_map[key] = s
+            day_slots = list(dedup_map.values())
             day_slots.sort(key=lambda s: (s["start"], s["resource"], s["id"]))
             C.table([("t", "Time", "strong"), ("room", "Resource"), ("state", "State"), ("job", "Job Position")],
                     [{"t": f"{H.fmt_dt(s['start'], False)} - {H.fmt_dt(s['end'], False)}", "room": s["resource"],

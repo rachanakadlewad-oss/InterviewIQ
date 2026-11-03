@@ -447,6 +447,10 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     def feedback(a: Application = Depends(candidate), db=Depends(get_db)):
         return reports.candidate_feedback(db, a.id)
 
+    @app.post("/portal/interview/retry-assessment")
+    def portal_retry_assessment(a: Application = Depends(candidate), sv: Supervisor = Depends(sup)):
+        return sv.retry_assessment(a.id)
+
     return app
 
 

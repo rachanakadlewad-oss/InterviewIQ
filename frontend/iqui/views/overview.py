@@ -28,7 +28,7 @@ def render():
 
     if na:
         left, right = st.columns([4.8, 1.2])
-        target_page = api.PAGE_MAP.get(na["page"], na["page"])
+        target_page = "Interviews" if na.get("key") == "schedule" else api.PAGE_MAP.get(na["page"], na["page"])
         with left:
             C.callout(na["tone"], "Next Recommended Action", na["label"])
         with right:
@@ -60,7 +60,7 @@ def render():
             else:
                 for i, act in enumerate(ov["pending_actions"]):
                     c1, c2 = st.columns([3.8, 1.2])
-                    tgt = api.PAGE_MAP.get(act["page"], act["page"])
+                    tgt = "Interviews" if act.get("key") == "schedule" else api.PAGE_MAP.get(act["page"], act["page"])
                     with c1:
                         C.badges(C.badge(tgt, act["tone"], dot=False))
                         st.caption(act["label"])

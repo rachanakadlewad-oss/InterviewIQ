@@ -44,9 +44,12 @@ class OpenAICompatLLM(BaseLLM):
         if not model:
             raise ValueError("LLM_MODEL must be set for the openai provider")
         self.api_key, self.model, self.timeout = api_key, model, timeout
-        clean_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        clean_url = (base_url or "https://api.openai.com/v1").strip().rstrip("/")
         if clean_url.endswith("/chat/completions"):
             clean_url = clean_url[:-len("/chat/completions")].rstrip("/")
+        if "api.groq.com" in clean_url.lower():
+            if not clean_url.endswith("/openai/v1"):
+                clean_url = "https://api.groq.com/openai/v1"
         self.base_url = clean_url
 
     def complete(self, system, user):

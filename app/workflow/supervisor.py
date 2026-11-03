@@ -407,6 +407,8 @@ class Supervisor:
 
     def retry_assessment(self, application_id: int) -> dict:
         a = self._app(application_id)
+        if a.status in ("ASSESSED", "DECIDED"):
+            return {"status": a.status, "message": "Assessment already completed."}
         if a.status not in ("ASSESSMENT_FAILED", "INTERVIEW_COMPLETE"):
             raise GateViolation(f"assessment retry only valid from ASSESSMENT_FAILED or INTERVIEW_COMPLETE (current: {a.status})")
         self.run_assessment(a.id)

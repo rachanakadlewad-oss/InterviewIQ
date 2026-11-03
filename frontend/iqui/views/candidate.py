@@ -279,12 +279,14 @@ def feedback(info):
         if s in ("INTERVIEW_COMPLETE", "ASSESSMENT_FAILED"):
             C.callout(
                 "info",
-                "Interview Completed - Assessment in Progress",
-                fb.get("message", "Your interview has ended and your responses are being analyzed. Your personalized feedback will appear here shortly.")
+                "Interview Completed - Assessment Finalization",
+                fb.get("message", "Your interview has ended and your responses are being analyzed. Click below to retrieve your feedback.")
             )
             col_ref, _ = st.columns([1.5, 3])
             with col_ref:
-                if st.button("Check Feedback Status", type="primary", use_container_width=True):
+                if st.button("Refresh / Finalize Feedback", type="primary", use_container_width=True):
+                    with st.spinner("Finalizing your competency feedback..."):
+                        api.request("POST", "/portal/interview/retry-assessment", token=token())
                     st.rerun()
         else:
             C.empty_state(
