@@ -187,3 +187,42 @@ class IdentityResult(BaseModel):
     reason: str = ""
     warning: str = ""
     human_override: bool = False
+
+
+# ----------------------------------------------------------------- authentication
+class UserRole(str, Enum):
+    RECRUITER = "recruiter"
+    CANDIDATE = "candidate"
+
+
+class SignupIn(BaseModel):
+    name: str = Field(min_length=2, max_length=150)
+    email: str = Field(min_length=5, max_length=200)
+    password: str = Field(min_length=8, max_length=128)
+    confirm_password: str = Field(min_length=8, max_length=128)
+    role: UserRole
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=5, max_length=200)
+    password: str = Field(min_length=1, max_length=128)
+    role: UserRole
+
+
+class UserOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    status: str
+    created_at: Optional[str] = None
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserOut
+
+
+class LogoutResponse(BaseModel):
+    status: str = "ok"
+    message: str = "Successfully logged out"

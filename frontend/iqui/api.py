@@ -23,9 +23,16 @@ def _detail(r) -> str:
 
 def request(method: str, path: str, token: Optional[str] = None, **kw) -> Tuple[bool, Any]:
     """Returns (ok, data_or_error_message, status_code is folded into message). Never raises, never renders."""
-    headers = {"X-API-Key": KEY} if KEY else {}
+    headers = kw.pop("headers", None) or {}
+    if KEY and "X-API-Key" not in headers:
+        headers["X-API-Key"] = KEY
     if token:
         headers["X-Access-Token"] = token
+    # Forward active user auth JWT token if logged in
+    auth_token = st.session_state.get("auth_token")
+    if auth_token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {auth_token}"
+        headers["X-Auth-Token"] = auth_token
     try:
         r = requests.request(method, API + path, headers=headers, timeout=120, **kw)
     except requests.RequestException:
@@ -33,9 +40,11 @@ def request(method: str, path: str, token: Optional[str] = None, **kw) -> Tuple[
     if r.status_code >= 400:
         msg = _detail(r)
         if r.status_code == 409:
-            msg = f"Blocked by a pipeline rule: {msg}"
+            msg = f"Blocked: {msg}"
         elif r.status_code == 401:
-            msg = "Not authorised: check your access token or recruiter API key."
+            msg = f"Not authorised: {msg}"
+        elif r.status_code == 403:
+            msg = f"Access denied: {msg}"
         return False, msg
     return True, r.json()
 
@@ -47,6 +56,67 @@ def call(method: str, path: str, token: Optional[str] = None, quiet: bool = Fals
             C.callout("error", "That did not work", data)
         return None
     return data
+
+
+# ---- auth helpers -----------------------------------------------------------
+def signup(name: str, email: str, password: str, confirm_password: str, role: str) -> Tuple[bool, Any]:
+    ok, data = request("POST", "/auth/signup", json={
+        "name": name.strip(),
+        "email": email.strip().lower(),
+        "password": password,
+        "confirm_password": confirm_password,
+        "role": role.lower()
+    })
+    if ok and isinstance(data, dict) and "token" in data:
+        st.session_state["auth_token"] = data["token"]
+        st.session_state["auth_user"] = data["user"]
+        st.session_state["role"] = data["user"]["role"].capitalize()
+        return True, data["user"]
+    return False, data
+
+
+def login(email: str, password: str, role: str) -> Tuple[bool, Any]:
+    ok, data = request("POST", "/auth/login", json={
+        "email": email.strip().lower(),
+        "password": password,
+        "role": role.lower()
+    })
+    if ok and isinstance(data, dict) and "token" in data:
+        st.session_state["auth_token"] = data["token"]
+        st.session_state["auth_user"] = data["user"]
+        st.session_state["role"] = data["user"]["role"].capitalize()
+        return True, data["user"]
+    return False, data
+
+
+def logout() -> bool:
+    try:
+        request("POST", "/auth/logout")
+    except Exception:
+        pass
+    st.session_state.pop("auth_token", None)
+    st.session_state.pop("auth_user", None)
+    st.session_state.pop("cand_token", None)
+    st.session_state.pop("role", None)
+    st.session_state.pop("job_id", None)
+    st.session_state.pop("nav_recruiter", None)
+    st.session_state.pop("nav_candidate", None)
+    return True
+
+
+def is_authenticated() -> bool:
+    return bool(st.session_state.get("auth_token"))
+
+
+def get_current_user() -> Optional[dict]:
+    return st.session_state.get("auth_user")
+
+
+def get_current_role() -> Optional[str]:
+    user = get_current_user()
+    if user:
+        return user.get("role")
+    return None
 
 
 def config():

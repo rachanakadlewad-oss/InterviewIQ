@@ -61,6 +61,10 @@ class Settings:
     database_url: str = DEFAULT_DB_URL
     enforce_slot_time: bool = False
     recruiter_api_key: str = ""
+    jwt_secret_key: str = "interviewiq-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_hours: int = 24
+    require_auth: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -114,6 +118,10 @@ class Settings:
             database_url=db_url,
             enforce_slot_time=_b("ENFORCE_SLOT_TIME", False),
             recruiter_api_key=os.getenv("RECRUITER_API_KEY", ""),
+            jwt_secret_key=os.getenv("JWT_SECRET_KEY", "interviewiq-secret-key-change-in-production"),
+            jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
+            jwt_expiration_hours=_i("JWT_EXPIRATION_HOURS", 24),
+            require_auth=_b("REQUIRE_AUTH", False),
         )
         s.validate()
         return s

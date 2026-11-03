@@ -69,7 +69,7 @@ def run_agent(*, name: str, llm: BaseLLM, system: str, payload: dict, out_model:
                  "\n\nReturn a JSON object matching this JSON Schema:\n" + schema)
     error_note = ""
     last_err = "unknown"
-    max_attempts = max(max_retries + 1, 4)
+    max_attempts = max_retries + 1
     attempt = 0
     while attempt < max_attempts:
         attempt += 1

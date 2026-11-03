@@ -36,15 +36,15 @@ def sign_in():
 
 
 def render(page):
-    if not token():
-        sign_in()
-        return
     info = me()
     if not info:
-        st.session_state.pop("cand_token", None)
-        C.callout("error", "Your session is no longer valid", "Please sign in again.")
+        if token():
+            st.session_state.pop("cand_token", None)
+            C.callout("error", "Your session is no longer valid", "Please sign in again.")
         sign_in()
         return
+    if info.get("access_token") and not st.session_state.get("cand_token"):
+        st.session_state["cand_token"] = info["access_token"]
     {"My Application": my_application, "Interview Details": interview_details, "Identity Verification": identity,
      "Join Interview": join_interview, "My Feedback": feedback}[page](info)
 

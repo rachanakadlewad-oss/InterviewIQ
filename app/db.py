@@ -16,6 +16,27 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), index=True)  # "recruiter" or "candidate"
+    status: Mapped[str] = mapped_column(String(20), default="active")  # "active", "suspended"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # jti / session token id
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -45,6 +66,7 @@ class Application(Base):
     access_token: Mapped[str] = mapped_column(String(64), unique=True)
     photo_path: Mapped[Optional[str]] = mapped_column(String(400), nullable=True)
     identity_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -144,6 +166,16 @@ def init_db(url: str):
         Path(url.replace("sqlite:///", "", 1)).parent.mkdir(parents=True, exist_ok=True)
     _engine = create_engine(url, **kwargs)
     Base.metadata.create_all(_engine)
+    # Safe migration for existing SQLite database: add user_id column to applications if missing
+    if url.startswith("sqlite") and ":memory:" not in url:
+        try:
+            with _engine.connect() as conn:
+                cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()]
+                if cols and "user_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE applications ADD COLUMN user_id INTEGER REFERENCES users(id)")
+                    conn.commit()
+        except Exception:
+            pass
     _Session = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 

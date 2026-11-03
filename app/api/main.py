@@ -1,21 +1,22 @@
-"""FastAPI backend. Recruiter endpoints optionally protected by X-API-Key (RECRUITER_API_KEY);
-candidate endpoints are authenticated by the per-application access token from the confirmation artifact."""
+"""FastAPI backend. Authentication supports separate Recruiter and Candidate accounts (JWT sessions),
+with backward-compatible support for candidate access tokens and recruiter API key."""
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from app import db as dbm
 from app.config import Settings, get_settings, set_settings
-from app.db import Application, IdentityCheckRow, Job, ReviewItem, Slot, jdump, jload
+from app.db import Application, IdentityCheckRow, Job, ReviewItem, Slot, User, UserSession, jdump, jload
 from app.logging_setup import setup_logging
-from app.schemas import JobIn, SessionState
+from app.schemas import AuthResponse, JobIn, LoginIn, LogoutResponse, SessionState, SignupIn, UserOut
+from app.services import auth as auth_svc
 from app.services import identity as idsvc
 from app.services import overview as overview_svc
 from app.services import reports, scheduler
@@ -46,16 +47,101 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     def sup(db=Depends(get_db)) -> Supervisor:
         return Supervisor(db, s, llm=llm, identity_backend=identity_backend)
 
-    def recruiter(x_api_key: Optional[str] = Header(default=None)):
-        if s.recruiter_api_key and x_api_key != s.recruiter_api_key:
+    # ------------------------------------------------------------ auth dependencies
+    def _get_auth_header(
+        authorization: Optional[str] = Header(default=None),
+        x_auth_token: Optional[str] = Header(default=None),
+    ) -> Optional[str]:
+        if x_auth_token and x_auth_token.strip():
+            return x_auth_token.strip()
+        if authorization and authorization.strip():
+            parts = authorization.strip().split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                return parts[1]
+            return authorization.strip()
+        return None
+
+    def get_current_user_optional(
+        auth_token: Optional[str] = Depends(_get_auth_header),
+        db=Depends(get_db)
+    ) -> Optional[User]:
+        if not auth_token:
+            return None
+        try:
+            payload = auth_svc.decode_access_token(auth_token, s.jwt_secret_key, algorithm=s.jwt_algorithm)
+        except Exception:
+            raise HTTPException(401, "Invalid or expired session token")
+
+        jti = payload.get("jti")
+        user_id = payload.get("user_id")
+        if not jti or not user_id:
+            raise HTTPException(401, "Malformed session token")
+
+        sess = db.get(UserSession, jti)
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        sess_exp = sess.expires_at.replace(tzinfo=None) if (sess and sess.expires_at) else None
+        if not sess or sess.revoked or (sess_exp and sess_exp < now_utc):
+            raise HTTPException(401, "Session has expired or was revoked. Please log in again.")
+
+        user = db.get(User, user_id)
+        if not user or user.status != "active":
+            raise HTTPException(401, "User account is not found or inactive.")
+        return user
+
+    def recruiter(
+        current_user: Optional[User] = Depends(get_current_user_optional),
+        x_api_key: Optional[str] = Header(default=None),
+    ) -> Optional[User]:
+        if current_user:
+            if current_user.role != "recruiter":
+                raise HTTPException(403, "Recruiter access required. Candidates are not permitted to access this resource.")
+            return current_user
+
+        if s.recruiter_api_key:
+            if x_api_key and x_api_key == s.recruiter_api_key:
+                return None
             raise HTTPException(401, "invalid or missing X-API-Key")
 
-    def candidate(x_access_token: Optional[str] = Header(default=None), db=Depends(get_db)) -> Application:
-        a = db.execute(select(Application).where(Application.access_token == (x_access_token or "-"))).scalar_one_or_none()
-        if not a:
-            raise HTTPException(401, "invalid access token")
-        return a
+        if s.require_auth:
+            raise HTTPException(401, "Authentication required. Please log in as a recruiter.")
 
+        return None
+
+    def candidate(
+        current_user: Optional[User] = Depends(get_current_user_optional),
+        x_access_token: Optional[str] = Header(default=None),
+        db=Depends(get_db)
+    ) -> Application:
+        if current_user:
+            if current_user.role != "candidate":
+                raise HTTPException(403, "Candidate access required. Recruiters are not permitted to access the candidate portal.")
+
+            if x_access_token:
+                a = db.execute(select(Application).where(Application.access_token == x_access_token)).scalar_one_or_none()
+                if not a:
+                    raise HTTPException(401, "invalid access token")
+                if a.user_id != current_user.id and (not a.email or a.email.strip().lower() != current_user.email.lower()):
+                    raise HTTPException(403, "This application does not belong to your candidate account.")
+                return a
+
+            a = db.execute(
+                select(Application).where(
+                    (Application.user_id == current_user.id) | (func.lower(Application.email) == current_user.email.lower())
+                ).order_by(Application.id.desc())
+            ).scalars().first()
+            if not a:
+                raise HTTPException(404, "No application linked to this candidate account.")
+            return a
+
+        if x_access_token:
+            a = db.execute(select(Application).where(Application.access_token == x_access_token)).scalar_one_or_none()
+            if not a:
+                raise HTTPException(401, "invalid access token")
+            return a
+
+        raise HTTPException(401, "Authentication required. Please sign in or provide a candidate access token.")
+
+    # ------------------------------------------------------------ exception handlers
     @app.exception_handler(GateViolation)
     async def _gate(_, exc):
         from fastapi.responses import JSONResponse
@@ -70,6 +156,159 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     async def _val(_, exc):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    # ------------------------------------------------------------ auth endpoints
+    @app.post("/auth/signup", response_model=AuthResponse)
+    def auth_signup(body: SignupIn, db=Depends(get_db)):
+        name = body.name.strip()
+        email = body.email.strip().lower()
+        if not auth_svc.is_valid_email(email):
+            raise HTTPException(422, "Invalid email format.")
+        pw_err = auth_svc.validate_password_strength(body.password)
+        if pw_err:
+            raise HTTPException(422, pw_err)
+        if body.password != body.confirm_password:
+            raise HTTPException(422, "Passwords do not match.")
+
+        existing = db.execute(select(User).where(func.lower(User.email) == email)).scalar_one_or_none()
+        if existing:
+            raise HTTPException(409, f"An account with email '{email}' already exists.")
+
+        hashed = auth_svc.hash_password(body.password)
+        user = User(
+            name=name,
+            email=email,
+            password_hash=hashed,
+            role=body.role.value,
+            status="active"
+        )
+        db.add(user)
+        db.flush()
+
+        if user.role == "candidate":
+            db.execute(
+                update(Application).where(func.lower(Application.email) == email).values(user_id=user.id)
+            )
+
+        token_str, session_id, expires_at = auth_svc.create_access_token(
+            user_id=user.id,
+            email=user.email,
+            role=user.role,
+            name=user.name,
+            secret_key=s.jwt_secret_key,
+            expires_hours=s.jwt_expiration_hours,
+            algorithm=s.jwt_algorithm
+        )
+        db_sess = UserSession(
+            id=session_id,
+            user_id=user.id,
+            role=user.role,
+            expires_at=expires_at,
+            revoked=False
+        )
+        db.add(db_sess)
+        db.commit()
+
+        return AuthResponse(
+            token=token_str,
+            user=UserOut(
+                id=user.id,
+                name=user.name,
+                email=user.email,
+                role=user.role,
+                status=user.status,
+                created_at=user.created_at.isoformat()
+            )
+        )
+
+    @app.post("/auth/login", response_model=AuthResponse)
+    def auth_login(body: LoginIn, db=Depends(get_db)):
+        email = body.email.strip().lower()
+        user = db.execute(select(User).where(func.lower(User.email) == email)).scalar_one_or_none()
+        if not user:
+            raise HTTPException(401, f"No account found for '{email}'. Please select 'Create Account' above to sign up.")
+
+        if user.role != body.role.value:
+            raise HTTPException(
+                403,
+                f"This account is registered as a {user.role}, not a {body.role.value}. Please switch to the {user.role.title()} login."
+            )
+
+        if not auth_svc.verify_password(body.password, user.password_hash):
+            raise HTTPException(401, "Invalid email or password. Please check your credentials.")
+
+        if user.status != "active":
+            raise HTTPException(403, "Account is suspended or inactive.")
+
+        if user.role == "candidate":
+            db.execute(
+                update(Application).where(
+                    func.lower(Application.email) == email,
+                    Application.user_id.is_(None)
+                ).values(user_id=user.id)
+            )
+
+        token_str, session_id, expires_at = auth_svc.create_access_token(
+            user_id=user.id,
+            email=user.email,
+            role=user.role,
+            name=user.name,
+            secret_key=s.jwt_secret_key,
+            expires_hours=s.jwt_expiration_hours,
+            algorithm=s.jwt_algorithm
+        )
+        db_sess = UserSession(
+            id=session_id,
+            user_id=user.id,
+            role=user.role,
+            expires_at=expires_at,
+            revoked=False
+        )
+        db.add(db_sess)
+        db.commit()
+
+        return AuthResponse(
+            token=token_str,
+            user=UserOut(
+                id=user.id,
+                name=user.name,
+                email=user.email,
+                role=user.role,
+                status=user.status,
+                created_at=user.created_at.isoformat()
+            )
+        )
+
+    @app.post("/auth/logout", response_model=LogoutResponse)
+    def auth_logout(
+        auth_token: Optional[str] = Depends(_get_auth_header),
+        db=Depends(get_db)
+    ):
+        if auth_token:
+            try:
+                payload = auth_svc.decode_access_token(auth_token, s.jwt_secret_key, algorithm=s.jwt_algorithm)
+                jti = payload.get("jti")
+                if jti:
+                    sess = db.get(UserSession, jti)
+                    if sess:
+                        sess.revoked = True
+                        db.commit()
+            except Exception:
+                pass
+        return LogoutResponse(status="ok", message="Successfully logged out")
+
+    @app.get("/auth/me")
+    def auth_me(user: User = Depends(get_current_user_optional)):
+        if not user:
+            raise HTTPException(401, "Not authenticated")
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "status": user.status,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        }
 
     # ------------------------------------------------------------ system
     @app.get("/health")
@@ -90,7 +329,7 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
                 # status flags only - secrets are never returned
                 "llm_configured": bool(s.llm_api_key) if not s.is_demo_llm else None,
                 "identity_threshold": s.identity_match_threshold, "enforce_slot_time": s.enforce_slot_time,
-                "recruiter_auth_enabled": bool(s.recruiter_api_key),
+                "recruiter_auth_enabled": bool(s.recruiter_api_key) or s.require_auth,
                 "thresholds": {"advance_min": s.recommend_advance_min, "review_min": s.recommend_review_min},
                 "shortlist": {"top_n": s.shortlist_top_n, "min_score": s.shortlist_min_score}}
 
@@ -170,9 +409,14 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             text, profile, embedded_photo = parse_resume(file.filename or "resume", data)
         except ResumeParseError as e:
             raise HTTPException(422, str(e))
+
+        candidate_user = None
+        if profile.email:
+            candidate_user = db.execute(select(User).where(func.lower(User.email) == profile.email.strip().lower(), User.role == "candidate")).scalar_one_or_none()
+
         a = Application(job_id=job_id, candidate_name=profile.name, email=profile.email, status="PARSED",
                         resume_filename=file.filename or "", resume_text=text, profile_json=jdump(profile.model_dump()),
-                        access_token=new_access_token())
+                        access_token=new_access_token(), user_id=candidate_user.id if candidate_user else None)
         db.add(a); db.flush()
         photo_bytes = (await photo.read()) if photo else embedded_photo
         if photo_bytes:
@@ -404,11 +648,41 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
         return {"deleted": sv.purge_biometrics(application_id)}
 
     # ------------------------------------------------------------ candidate portal
+    @app.get("/portal/applications")
+    def list_portal_applications(
+        current_user: User = Depends(get_current_user_optional),
+        db=Depends(get_db)
+    ):
+        if not current_user:
+            raise HTTPException(401, "Authentication required")
+        if current_user.role != "candidate":
+            raise HTTPException(403, "Candidate access required")
+
+        apps = db.execute(
+            select(Application).where(
+                (Application.user_id == current_user.id) | (func.lower(Application.email) == current_user.email.lower())
+            ).order_by(Application.id.desc())
+        ).scalars().all()
+
+        jobs = {j.id: j.title for j in db.execute(select(Job)).scalars()}
+        return [
+            {
+                "application_id": a.id,
+                "job_id": a.job_id,
+                "job_title": jobs.get(a.job_id, f"Job #{a.job_id}"),
+                "status": a.status,
+                "access_token": a.access_token,
+                "created_at": a.created_at.isoformat() if a.created_at else None
+            }
+            for a in apps
+        ]
+
     @app.get("/portal/me")
     def me(a: Application = Depends(candidate), db=Depends(get_db)):
         sl = scheduler.slot_of(db, a.id)
         job = db.get(Job, a.job_id)
         return {"application_id": a.id, "name": a.candidate_name, "status": a.status, "job_title": job.title if job else "",
+                "access_token": a.access_token,
                 "max_questions": s.max_questions, "slot": ({"start": sl.start.isoformat(), "end": sl.end.isoformat()} if sl else None),
                 "identity_backend": s.identity_backend, "identity_is_demo": s.identity_backend == "demo",
                 "demo_identity_scenarios": idsvc.SCENARIOS if s.identity_backend == "demo" else []}
