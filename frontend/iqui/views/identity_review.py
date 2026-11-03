@@ -350,7 +350,9 @@ def render_resolved_audit(resolved_items):
                     C.badge(res_label, res_tone),
                     C.badge(item.get("job_title") or "Candidate", "neutral", dot=False)
                 )
-                st.markdown(f"### {item.get('candidate_name') or f'Application #{item.get(\"application_id\")}'}")
+                candidate_name = item.get("candidate_name") or f"Application #{item.get('application_id')}"
+                st.markdown(f"### {candidate_name}")
+
             with col2:
                 st.caption(f"Resolved: **{H.fmt_dt(item.get('resolved_at'))}**")
                 st.caption(f"Review ID: #{item.get('id')}")
