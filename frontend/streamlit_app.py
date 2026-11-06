@@ -6,7 +6,7 @@ import streamlit as st
 st.set_page_config(page_title="InterviewIQ", page_icon="IQ", layout="wide", initial_sidebar_state="expanded")
 
 from iqui import api, components as C  # noqa: E402
-from iqui.views import (auth, candidate, candidates, interviews, jobs, overview, reports, settings)  # noqa: E402
+from iqui.views import (auth, candidate, candidates, interviews, jobs, overview, reports)  # noqa: E402
 
 RECRUITER_PAGES = {
     "Dashboard": overview.render,
@@ -14,7 +14,6 @@ RECRUITER_PAGES = {
     "Candidates": candidates.render,
     "Interviews": interviews.render,
     "Reports": reports.render,
-    "Settings": settings.render,
 }
 
 RECRUITER_LABELS = {
@@ -23,7 +22,6 @@ RECRUITER_LABELS = {
     "Candidates": "👥  Candidates",
     "Interviews": "🎙️  Interviews",
     "Reports": "📑  Reports",
-    "Settings": "⚙️  Settings",
 }
 
 C.inject_theme()
