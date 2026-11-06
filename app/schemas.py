@@ -3,7 +3,7 @@
 Agents never exchange free text: every agent output is parsed into one of these models and then
 passed through additional semantic checks (see app/agents/*)."""
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -24,8 +24,15 @@ class Competency(BaseModel):
 
 class JobIn(BaseModel):
     title: str = Field(min_length=2)
+    company: str = "TechCorp"
     description: str = ""
-    competencies: List[Competency] = Field(min_length=1)
+    required_skills: str = ""
+    preferred_skills: str = ""
+    experience_level: str = "Mid-level"
+    location: str = "Remote"
+    employment_type: str = "Full-time"
+    status: str = "ACTIVE"
+    competencies: List[Competency] = Field(default_factory=list)
 
     @field_validator("competencies")
     @classmethod
@@ -215,6 +222,7 @@ class UserOut(BaseModel):
     email: str
     role: str
     status: str
+    profile_info: Optional[str] = ""
     created_at: Optional[str] = None
 
 
@@ -226,3 +234,22 @@ class AuthResponse(BaseModel):
 class LogoutResponse(BaseModel):
     status: str = "ok"
     message: str = "Successfully logged out"
+
+
+# ----------------------------------------------------------------- candidate profile
+class CandidateProfileIn(BaseModel):
+    skills: List[str] = Field(default_factory=list)
+    experience: List[str] = Field(default_factory=list)
+    education: List[str] = Field(default_factory=list)
+    additional_info: str = ""
+
+
+class CandidateProfileOut(BaseModel):
+    id: int
+    user_id: int
+    skills: List[str] = Field(default_factory=list)
+    experience: List[str] = Field(default_factory=list)
+    education: List[str] = Field(default_factory=list)
+    resume_filename: str = ""
+    additional_info: str = ""
+    updated_at: Optional[str] = None

@@ -1,4 +1,4 @@
-"""Thin HTTP client for the FastAPI backend + Streamlit navigation helpers."""
+"""Thin HTTP client for the FastAPI backend + Streamlit navigation & auth helpers."""
 import os
 from typing import Any, Optional, Tuple
 
@@ -16,27 +16,30 @@ def _detail(r) -> str:
         d = r.json().get("detail", r.text)
     except Exception:
         return r.text[:300]
-    if isinstance(d, list):                                  # FastAPI validation errors
+    if isinstance(d, list):  # FastAPI validation errors
         return "; ".join(f"{'.'.join(str(x) for x in e.get('loc', [])[1:])}: {e.get('msg')}" for e in d)
     return str(d)
 
 
 def request(method: str, path: str, token: Optional[str] = None, **kw) -> Tuple[bool, Any]:
-    """Returns (ok, data_or_error_message, status_code is folded into message). Never raises, never renders."""
+    """Returns (ok, data_or_error_message). Never raises, never renders."""
     headers = kw.pop("headers", None) or {}
     if KEY and "X-API-Key" not in headers:
         headers["X-API-Key"] = KEY
     if token:
         headers["X-Access-Token"] = token
-    # Forward active user auth JWT token if logged in
-    auth_token = st.session_state.get("auth_token")
+
+    # Forward active user auth JWT token if logged in or restored from query params
+    auth_token = st.session_state.get("auth_token") or st.query_params.get("session")
     if auth_token and "Authorization" not in headers:
         headers["Authorization"] = f"Bearer {auth_token}"
         headers["X-Auth-Token"] = auth_token
+
     try:
         r = requests.request(method, API + path, headers=headers, timeout=120, **kw)
     except requests.RequestException:
         return False, f"Cannot reach the backend at {API}. Start it with run_backend.bat."
+
     if r.status_code >= 400:
         msg = _detail(r)
         if r.status_code == 409:
@@ -53,12 +56,29 @@ def call(method: str, path: str, token: Optional[str] = None, quiet: bool = Fals
     ok, data = request(method, path, token, **kw)
     if not ok:
         if not quiet:
-            C.callout("error", "That did not work", data)
+            C.callout("error", "Error", data)
         return None
     return data
 
 
-# ---- auth helpers -----------------------------------------------------------
+# ---- auth helpers & persistence across page refresh ------------------------
+def restore_session():
+    """Restores user session across page refreshes using URL query params and backend token validation."""
+    if not st.session_state.get("auth_token"):
+        q_sess = st.query_params.get("session")
+        if q_sess and isinstance(q_sess, str) and len(q_sess) > 20:
+            ok, user_data = request("GET", "/auth/me", headers={"Authorization": f"Bearer {q_sess}"})
+            if ok and isinstance(user_data, dict) and "id" in user_data:
+                st.session_state["auth_token"] = q_sess
+                st.session_state["auth_user"] = user_data
+                st.session_state["role"] = user_data["role"].capitalize()
+            else:
+                try:
+                    del st.query_params["session"]
+                except Exception:
+                    pass
+
+
 def signup(name: str, email: str, password: str, confirm_password: str, role: str) -> Tuple[bool, Any]:
     ok, data = request("POST", "/auth/signup", json={
         "name": name.strip(),
@@ -71,6 +91,7 @@ def signup(name: str, email: str, password: str, confirm_password: str, role: st
         st.session_state["auth_token"] = data["token"]
         st.session_state["auth_user"] = data["user"]
         st.session_state["role"] = data["user"]["role"].capitalize()
+        st.query_params["session"] = data["token"]
         return True, data["user"]
     return False, data
 
@@ -85,6 +106,7 @@ def login(email: str, password: str, role: str) -> Tuple[bool, Any]:
         st.session_state["auth_token"] = data["token"]
         st.session_state["auth_user"] = data["user"]
         st.session_state["role"] = data["user"]["role"].capitalize()
+        st.query_params["session"] = data["token"]
         return True, data["user"]
     return False, data
 
@@ -94,13 +116,11 @@ def logout() -> bool:
         request("POST", "/auth/logout")
     except Exception:
         pass
-    st.session_state.pop("auth_token", None)
-    st.session_state.pop("auth_user", None)
-    st.session_state.pop("cand_token", None)
-    st.session_state.pop("role", None)
-    st.session_state.pop("job_id", None)
-    st.session_state.pop("nav_recruiter", None)
-    st.session_state.pop("nav_candidate", None)
+    try:
+        del st.query_params["session"]
+    except Exception:
+        pass
+    st.session_state.clear()
     return True
 
 
@@ -121,6 +141,32 @@ def get_current_role() -> Optional[str]:
 
 def config():
     return call("GET", "/config", quiet=True)
+
+
+# ---- candidate & recruiter endpoints ----------------------------------------
+def get_recruiter_candidates(job_id: Optional[int] = None, status: Optional[str] = None, search: Optional[str] = None):
+    params = []
+    if job_id:
+        params.append(f"job_id={job_id}")
+    if status and status != "All":
+        params.append(f"status={status}")
+    if search:
+        params.append(f"search={requests.utils.quote(search)}")
+    qs = ("?" + "&".join(params)) if params else ""
+    return call("GET", f"/recruiter/candidates{qs}") or []
+
+
+def update_candidate_status(application_id: int, action: str, notes: Optional[str] = None) -> bool:
+    ok, res = request("PATCH", f"/applications/{application_id}/status", json={"action": action, "notes": notes or ""})
+    if ok:
+        flash("success", "Status Updated", f"Candidate status changed to {action.title()}.")
+        return True
+    flash("error", "Status Update Failed", str(res))
+    return False
+
+
+def rescore_candidate(application_id: int):
+    return call("POST", f"/applications/{application_id}/rescore")
 
 
 # ---- navigation -------------------------------------------------------------
@@ -160,11 +206,11 @@ def job_picker(label: str = "Job") -> Optional[int]:
         st.session_state["job_id"] = st.session_state.pop("_new_job_id")
     jobs = call("GET", "/jobs") or []
     if not jobs:
-        C.empty_state("No jobs yet", "Create a job first. It defines the competencies that candidates are scored against.")
-        st.button("Create a job", on_click=go, args=("Jobs",), type="primary")
+        C.empty_state("No jobs yet", "Create your first job opening to start receiving candidates.")
+        st.button("Create a Job", on_click=go, args=("Jobs",), type="primary")
         return None
     ids = [j["id"] for j in jobs]
     if st.session_state.get("job_id") not in ids:
-        st.session_state["job_id"] = ids[-1]
+        st.session_state["job_id"] = ids[0]
     st.selectbox(label, ids, key="job_id", format_func=lambda i: next(f"{j['title']}  (#{j['id']})" for j in jobs if j["id"] == i))
     return st.session_state["job_id"]

@@ -1,12 +1,19 @@
-"""InterviewIQ - entry point. Run with:  streamlit run frontend/streamlit_app.py
-Structure: iqui/theme.py (design tokens + CSS), iqui/components.py (UI building blocks), iqui/api.py (backend client),
-iqui/views/* (one module per page)."""
+"""InterviewIQ - Modern AI Recruitment Platform.
+Run with: streamlit run frontend/streamlit_app.py"""
 import streamlit as st
 
-st.set_page_config(page_title="InterviewIQ", page_icon="IQ", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="InterviewIQ - AI Hiring Platform",
+    page_icon="💼",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 from iqui import api, components as C  # noqa: E402
 from iqui.views import (auth, candidate, candidates, interviews, jobs, overview, reports)  # noqa: E402
+
+# 1. Restore authenticated session across page refreshes
+api.restore_session()
 
 RECRUITER_PAGES = {
     "Dashboard": overview.render,
@@ -33,11 +40,39 @@ if q_token and not st.session_state.get("cand_token"):
     st.session_state["cand_token"] = str(q_token)
     st.session_state["role"] = "Candidate"
 
-# Determine role and authenticated user
+# Determine role and authenticated user from backend session
 current_user = api.get_current_user()
 user_role = (current_user.get("role") if current_user else None) or (st.session_state.get("role", "").lower() if st.session_state.get("role") else None)
 if not user_role and st.session_state.get("cand_token"):
     user_role = "candidate"
+
+
+def render_top_corner_profile(user: dict, role: str):
+    """Renders small circular avatar containing the first letter of the user's name in top-right corner."""
+    name = (user.get("name") if user else None) or ("Recruiter" if role == "recruiter" else "Candidate")
+    email = (user.get("email") if user else "") or ""
+    first_letter = name.strip()[0].upper() if name.strip() else ("R" if role == "recruiter" else "C")
+    first_name = name.split()[0] if name else name
+
+    c_spacer, c_prof = st.columns([4.2, 1.4])
+    with c_prof:
+        with st.popover(f"🟢 [{first_letter}]  {first_name}", use_container_width=True):
+            st.markdown(
+                f'''<div style="text-align:center;padding:0.4rem 0 0.6rem;">
+                    <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#2563EB,#1D4ED8);color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-size:1.35rem;font-weight:750;margin-bottom:0.4rem;box-shadow:0 3px 10px rgba(37,99,235,0.4);">
+                        {first_letter}
+                    </div>
+                    <div style="font-weight:700;font-size:1.02rem;color:var(--text);">{C.esc(name)}</div>
+                    <div style="font-size:0.82rem;color:var(--muted);margin-bottom:0.4rem;word-break:break-all;">{C.esc(email)}</div>
+                    <span class="iq-badge {'info' if role == 'recruiter' else 'success'}"><i></i>{role.title()} Account</span>
+                </div>''',
+                unsafe_allow_html=True
+            )
+            st.divider()
+            if st.button("🚪  Log Out", key="popover_logout_action", use_container_width=True):
+                api.logout()
+                st.rerun()
+
 
 with st.sidebar:
     C.brand()
@@ -46,12 +81,12 @@ with st.sidebar:
         u_name = current_user.get("name", "Recruiter") if current_user else "Recruiter"
         u_email = current_user.get("email", "") if current_user else ""
         st.markdown(
-            f'''<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.65rem 0.8rem;margin-bottom:0.6rem;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.2rem;">
-                    <span style="font-weight:650;font-size:0.85rem;color:var(--text);">{C.esc(u_name)}</span>
-                    <span class="iq-badge info" style="font-size:0.68rem;padding:0.12rem 0.45rem;">Recruiter</span>
+            f'''<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.75rem 0.9rem;margin-bottom:0.7rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.25rem;">
+                    <span style="font-weight:700;font-size:0.92rem;color:var(--text);">{C.esc(u_name)}</span>
+                    <span class="iq-badge info" style="font-size:0.72rem;padding:0.15rem 0.5rem;">Recruiter</span>
                 </div>
-                <div style="font-size:0.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;">{C.esc(u_email)}</div>
+                <div style="font-size:0.8rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;">{C.esc(u_email)}</div>
             </div>''',
             unsafe_allow_html=True
         )
@@ -72,12 +107,12 @@ with st.sidebar:
         u_name = current_user.get("name", "Candidate") if current_user else "Candidate"
         u_email = current_user.get("email", "") if current_user else ""
         st.markdown(
-            f'''<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.65rem 0.8rem;margin-bottom:0.6rem;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.2rem;">
-                    <span style="font-weight:650;font-size:0.85rem;color:var(--text);">{C.esc(u_name)}</span>
-                    <span class="iq-badge success" style="font-size:0.68rem;padding:0.12rem 0.45rem;">Candidate</span>
+            f'''<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.75rem 0.9rem;margin-bottom:0.7rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.25rem;">
+                    <span style="font-weight:700;font-size:0.92rem;color:var(--text);">{C.esc(u_name)}</span>
+                    <span class="iq-badge success" style="font-size:0.72rem;padding:0.15rem 0.5rem;">Candidate</span>
                 </div>
-                <div style="font-size:0.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;">{C.esc(u_email)}</div>
+                <div style="font-size:0.8rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;">{C.esc(u_email)}</div>
             </div>''',
             unsafe_allow_html=True
         )
@@ -90,7 +125,7 @@ with st.sidebar:
                 active_tok = st.session_state.get("cand_token")
                 curr_idx = list(app_map.keys()).index(active_tok) if active_tok in app_map else 0
                 sel_tok = st.selectbox(
-                    "Application",
+                    "Active Application",
                     list(app_map.keys()),
                     index=curr_idx,
                     format_func=lambda t: app_map[t],
@@ -112,17 +147,17 @@ with st.sidebar:
 
     C.side_label("System Status")
     if cfg:
-        llm_label = "Rule-based (Demo)" if cfg["demo_llm"] else f"{cfg['llm_provider'].title()} ({cfg.get('llm_model') or 'Default'})"
-        idm_label = "Simulated Check" if cfg["identity_is_demo"] else "Automated Check"
+        llm_label = "Rule-based (Demo)" if cfg.get("demo_llm") else f"{cfg.get('llm_provider', 'LLM').title()} ({cfg.get('llm_model') or 'Default'})"
+        idm_label = "Simulated Check" if cfg.get("identity_is_demo") else "Automated Check"
         st.markdown(
-            f'<div class="iq-mode" style="display:flex;flex-direction:column;gap:0.35rem;">'
+            f'<div class="iq-mode" style="display:flex;flex-direction:column;gap:0.4rem;">'
             f'<div style="display:flex;align-items:center;justify-content:space-between;">'
-            f'<span style="color:var(--muted);font-size:0.72rem;">AI Engine</span>'
-            f'<span style="color:var(--text);font-weight:600;font-size:0.75rem;">{llm_label}</span>'
+            f'<span style="color:var(--muted);font-size:0.76rem;">AI Engine</span>'
+            f'<span style="color:var(--text);font-weight:650;font-size:0.8rem;">{llm_label}</span>'
             f'</div>'
             f'<div style="display:flex;align-items:center;justify-content:space-between;">'
-            f'<span style="color:var(--muted);font-size:0.72rem;">Verification</span>'
-            f'<span style="color:var(--text);font-weight:600;font-size:0.75rem;">{idm_label}</span>'
+            f'<span style="color:var(--muted);font-size:0.76rem;">Verification</span>'
+            f'<span style="color:var(--text);font-weight:650;font-size:0.8rem;">{idm_label}</span>'
             f'</div>'
             f'</div>',
             unsafe_allow_html=True
@@ -130,14 +165,18 @@ with st.sidebar:
     else:
         C.callout("error", "Backend offline", "Run run_backend.bat")
 
+
 # Main content router
 if cfg is None:
-    C.page_header("Cannot reach the backend", "InterviewIQ needs its API server running.")
+    C.page_header("Cannot reach backend server", "InterviewIQ requires the backend API server.")
     C.callout("error", "Backend offline", f"Expected at {api.API}. Open a terminal and run run_backend.bat, then refresh this page.")
 elif user_role == "recruiter":
+    render_top_corner_profile(current_user, user_role)
     api.show_flash()
     RECRUITER_PAGES[page]()
 elif user_role == "candidate":
+    render_top_corner_profile(current_user, user_role)
+    api.show_flash()
     candidate.render(page)
 else:
     auth.render()

@@ -1,10 +1,10 @@
-"""SQLAlchemy 2.x models + session helpers (SQLite)."""
+"""SQLAlchemy 2.x models + session helpers (SQLite / PostgreSQL)."""
 import json
 from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint,
-                        create_engine)
+                        create_engine, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -24,7 +24,21 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), index=True)  # "recruiter" or "candidate"
     status: Mapped[str] = mapped_column(String(20), default="active")  # "active", "suspended"
+    profile_info: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CandidateProfile(Base):
+    __tablename__ = "candidate_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    skills: Mapped[str] = mapped_column(Text, default="[]")
+    experience: Mapped[str] = mapped_column(Text, default="[]")
+    education: Mapped[str] = mapped_column(Text, default="[]")
+    resume_filename: Mapped[str] = mapped_column(String(300), default="")
+    resume_text: Mapped[str] = mapped_column(Text, default="")
+    additional_info: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class UserSession(Base):
@@ -40,16 +54,25 @@ class UserSession(Base):
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recruiter_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(200))
+    company: Mapped[str] = mapped_column(String(200), default="TechCorp")
     description: Mapped[str] = mapped_column(Text, default="")
-    competencies_json: Mapped[str] = mapped_column(Text)
+    required_skills: Mapped[str] = mapped_column(Text, default="")
+    preferred_skills: Mapped[str] = mapped_column(Text, default="")
+    experience_level: Mapped[str] = mapped_column(String(50), default="Mid-level")
+    location: Mapped[str] = mapped_column(String(100), default="Remote")
+    employment_type: Mapped[str] = mapped_column(String(50), default="Full-time")
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE")  # "ACTIVE", "INACTIVE"
+    competencies_json: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Application(Base):
     __tablename__ = "applications"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     candidate_name: Mapped[str] = mapped_column(String(200), default="")
     email: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[str] = mapped_column(String(40), default="PARSED")
@@ -59,14 +82,15 @@ class Application(Base):
     resume_scores_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     resume_summary: Mapped[str] = mapped_column(Text, default="")
     resume_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    scoring_source: Mapped[str] = mapped_column(String(20), default="")
+    ai_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ai_reasoning: Mapped[str] = mapped_column(Text, default="")
+    scoring_source: Mapped[str] = mapped_column(String(50), default="")
     scoring_error: Mapped[str] = mapped_column(Text, default="")
     rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shortlisted: Mapped[bool] = mapped_column(Boolean, default=False)
     access_token: Mapped[str] = mapped_column(String(64), unique=True)
     photo_path: Mapped[Optional[str]] = mapped_column(String(400), nullable=True)
     identity_attempts: Mapped[int] = mapped_column(Integer, default=0)
-    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -166,16 +190,50 @@ def init_db(url: str):
         Path(url.replace("sqlite:///", "", 1)).parent.mkdir(parents=True, exist_ok=True)
     _engine = create_engine(url, **kwargs)
     Base.metadata.create_all(_engine)
-    # Safe migration for existing SQLite database: add user_id column to applications if missing
+
+    # Safe migration for existing SQLite database
     if url.startswith("sqlite") and ":memory:" not in url:
         try:
             with _engine.connect() as conn:
-                cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()]
-                if cols and "user_id" not in cols:
-                    conn.exec_driver_sql("ALTER TABLE applications ADD COLUMN user_id INTEGER REFERENCES users(id)")
-                    conn.commit()
+                # 1. users table migrations
+                user_cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()]
+                if user_cols and "profile_info" not in user_cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN profile_info TEXT DEFAULT ''")
+
+                # 2. jobs table migrations
+                job_cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(jobs)").fetchall()]
+                if job_cols:
+                    if "recruiter_id" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN recruiter_id INTEGER REFERENCES users(id)")
+                    if "company" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN company VARCHAR(200) DEFAULT 'TechCorp'")
+                    if "required_skills" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN required_skills TEXT DEFAULT ''")
+                    if "preferred_skills" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN preferred_skills TEXT DEFAULT ''")
+                    if "experience_level" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN experience_level VARCHAR(50) DEFAULT 'Mid-level'")
+                    if "location" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN location VARCHAR(100) DEFAULT 'Remote'")
+                    if "employment_type" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN employment_type VARCHAR(50) DEFAULT 'Full-time'")
+                    if "status" not in job_cols:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN status VARCHAR(20) DEFAULT 'ACTIVE'")
+
+                # 3. applications table migrations
+                app_cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(applications)").fetchall()]
+                if app_cols:
+                    if "user_id" not in app_cols:
+                        conn.exec_driver_sql("ALTER TABLE applications ADD COLUMN user_id INTEGER REFERENCES users(id)")
+                    if "ai_score" not in app_cols:
+                        conn.exec_driver_sql("ALTER TABLE applications ADD COLUMN ai_score FLOAT")
+                    if "ai_reasoning" not in app_cols:
+                        conn.exec_driver_sql("ALTER TABLE applications ADD COLUMN ai_reasoning TEXT DEFAULT ''")
+
+                conn.commit()
         except Exception:
             pass
+
     _Session = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 

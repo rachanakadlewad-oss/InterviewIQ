@@ -1,166 +1,273 @@
-import json
-from pathlib import Path
-
-import pandas as pd
+"""Recruiter Jobs Management View.
+Provides job listings, status management (Active/Inactive), editing,
+safe deletion, and a simplified, intuitive Create Job form."""
 import streamlit as st
 
 from .. import api, components as C, helpers as H
 
-SAMPLE = Path(__file__).resolve().parents[3] / "data" / "sample" / "sample_jd.json"
-EDITOR_COLUMNS = {
-    "name": st.column_config.TextColumn("Competency", required=True, help="e.g. Python Programming, System Design"),
-    "weight": st.column_config.NumberColumn("Weight", min_value=0.1, max_value=10.0, step=0.1, default=1.0, help="Relative evaluation weight (e.g. 1.0 = standard, 2.0 = high priority)"),
-    "description": st.column_config.TextColumn("Skill Description", help="Brief summary of what this competency measures"),
-    "keywords": st.column_config.TextColumn("Target Keywords", help="Key technologies or terms to look for (comma-separated)"),
-    "question": st.column_config.TextColumn("Opening Question", help="Suggested opening question for the interview"),
-    "rubric_basic": st.column_config.TextColumn("Level 1 (Basic)", help="Expectations for a developing candidate"),
-    "rubric_working": st.column_config.TextColumn("Level 3 (Proficient)", help="Expectations for a solid, competent hire"),
-    "rubric_strong": st.column_config.TextColumn("Level 5 (Advanced)", help="Expectations for an exceptional hire"),
-}
-
-
-def _records(df: pd.DataFrame) -> list:
-    return [{k: (None if pd.isna(v) else v) for k, v in row.items()} for row in df.to_dict("records")]
-
 
 def render():
     C.page_header(
-        "Jobs",
-        "Define and manage job positions, evaluation competencies, and scoring rubrics.",
+        "Job Positions",
+        "Define job openings, configure role requirements, and manage active hiring listings.",
         "Recruiter workspace"
     )
-    tab_list, tab_new = st.tabs(["Active Jobs", "Create a Job"])
+
+    tab_list, tab_create = st.tabs(["📋 All Job Positions", "➕ Create New Job"])
+
     with tab_list:
-        jobs_view()
-    with tab_new:
-        create_view()
+        jobs_directory_view()
+
+    with tab_create:
+        create_job_view()
 
 
-def jobs_view():
-    ov = api.call("GET", "/overview") or {"per_job": []}
-    if not ov["per_job"]:
-        C.empty_state("No jobs yet", "Create your first job opening, or load the sample job from the Dashboard.", icon="💼")
+def jobs_directory_view():
+    jobs = api.call("GET", "/jobs") or []
+
+    if not jobs:
+        C.empty_state(
+            "No Job Openings Found",
+            "You haven't created any job openings yet. Switch to the 'Create New Job' tab to post your first position.",
+            icon="💼"
+        )
         return
 
-    # Job selection dropdown
-    selected = api.job_picker("Selected Job")
-    if not selected:
-        return
+    st.markdown(
+        f'<div style="margin-bottom:0.9rem;display:flex;align-items:center;justify-content:space-between;">'
+        f'<span class="iq-badge info" style="font-size:0.85rem;padding:0.25rem 0.75rem;">'
+        f'<b>{len(jobs)}</b> Total Positions Configured'
+        f'</span>'
+        f'<span style="font-size:0.82rem;color:var(--muted);">All changes update database records in real-time</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
-    job = api.call("GET", f"/jobs/{selected}")
-    if not job:
-        return
+    for job in jobs:
+        jid = job["id"]
+        title = job.get("title", f"Job #{jid}")
+        company = job.get("company", "TechCorp")
+        location = job.get("location", "Remote")
+        exp_level = job.get("experience_level", "Mid-level")
+        emp_type = job.get("employment_type", "Full-time")
+        status = job.get("status", "ACTIVE")
+        is_active = (status == "ACTIVE")
+        applicants_count = job.get("applicants", 0)
+        shortlisted_count = job.get("shortlisted", 0)
+        created_date = job.get("created_at") or "-"
+        if "T" in created_date:
+            created_date = created_date.split("T")[0]
 
-    # 1. Selected Job Profile Card
-    with st.container(border=True):
-        col_t, col_act = st.columns([3.5, 1])
-        with col_t:
-            C.badges(
-                C.badge(f"Active Job #{selected}", "info", dot=True),
-                C.badge(f"{len(job.get('competencies', []))} Competencies", "neutral", dot=False)
-            )
-            st.markdown(f"### {job['title']}")
-            if job.get("description"):
-                C.quote(job["description"])
-        with col_act:
-            st.caption("Active in workspace")
+        status_badge = C.badge("Active", "success", dot=True) if is_active else C.badge("Inactive", "neutral", dot=False)
 
-        # Edit Job Title / Description inline
-        with st.expander("Edit Job Title or Description", expanded=False):
-            with st.form(f"edit_job_{selected}"):
-                edit_title = st.text_input("Job Title", value=job.get("title", ""))
-                edit_desc = st.text_area("Job Description", value=job.get("description", "") or "", height=80)
-                if st.form_submit_button("Save Changes", type="primary"):
-                    if len((edit_title or "").strip()) < 2:
-                        C.callout("error", "Invalid Title", "Job title must be at least 2 characters.")
-                    else:
-                        res = api.call("PATCH", f"/jobs/{selected}", json={"title": edit_title.strip(), "description": edit_desc.strip()})
-                        if res:
-                            api.flash("success", "Job Updated", f"Successfully updated job to '{res['title']}'.")
+        with st.container(border=True):
+            col_info, col_metrics, col_actions = st.columns([3.2, 1.8, 1.8], vertical_alignment="center")
+
+            with col_info:
+                st.markdown(
+                    f'''<div>
+                        <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.25rem;">
+                            <span style="font-size:1.18rem;font-weight:750;color:var(--text);">{C.esc(title)}</span>
+                            {status_badge}
+                        </div>
+                        <div style="font-size:0.88rem;color:var(--text2);margin-bottom:0.2rem;">
+                            <b style="color:var(--text);">{C.esc(company)}</b> &nbsp;·&nbsp; {C.esc(location)} &nbsp;·&nbsp; {C.esc(emp_type)} &nbsp;·&nbsp; {C.esc(exp_level)}
+                        </div>
+                        <div style="font-size:0.78rem;color:var(--muted);">
+                            Created: {C.esc(created_date)} &nbsp;·&nbsp; Position ID: #{jid}
+                        </div>
+                    </div>''',
+                    unsafe_allow_html=True
+                )
+
+            with col_metrics:
+                st.markdown(
+                    f'''<div style="display:flex;gap:1.2rem;align-items:center;">
+                        <div>
+                            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Applicants</div>
+                            <div style="font-size:1.45rem;font-weight:800;color:var(--text);">{applicants_count}</div>
+                        </div>
+                        <div style="border-left:1px solid var(--border);padding-left:1.2rem;">
+                            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Shortlisted</div>
+                            <div style="font-size:1.45rem;font-weight:800;color:var(--success);">{shortlisted_count}</div>
+                        </div>
+                    </div>''',
+                    unsafe_allow_html=True
+                )
+
+            with col_actions:
+                a1, a2 = st.columns(2)
+                with a1:
+                    toggle_btn_label = "Deactivate" if is_active else "Activate"
+                    if st.button(toggle_btn_label, key=f"tog_{jid}", use_container_width=True):
+                        api.call("POST", f"/jobs/{jid}/toggle-status")
+                        api.flash("success", "Job Status Updated", f"Job #{jid} is now {'Inactive' if is_active else 'Active'}.")
+                        st.rerun()
+                with a2:
+                    if st.button("Delete", key=f"del_{jid}", type="secondary", use_container_width=True):
+                        st.session_state[f"confirm_delete_{jid}"] = True
+
+            # Confirmation prompt for job deletion
+            if st.session_state.get(f"confirm_delete_{jid}"):
+                C.callout(
+                    "warning",
+                    f"Confirm Deletion of Job #{jid}",
+                    f"Are you sure you want to delete '{title}'? This will remove the position and associated test records."
+                )
+                c_conf1, c_conf2, _ = st.columns([1.5, 1.5, 3])
+                with c_conf1:
+                    if st.button("Yes, Delete Job", key=f"btn_yes_del_{jid}", type="primary", use_container_width=True):
+                        api.call("DELETE", f"/jobs/{jid}")
+                        st.session_state.pop(f"confirm_delete_{jid}", None)
+                        api.flash("success", "Job Deleted", f"Successfully deleted job position #{jid}.")
+                        st.rerun()
+                with c_conf2:
+                    if st.button("Cancel", key=f"btn_no_del_{jid}", use_container_width=True):
+                        st.session_state.pop(f"confirm_delete_{jid}", None)
+                        st.rerun()
+
+            # Expandable View / Edit panel
+            with st.expander(f"⚙️ View Details & Edit Job #{jid}"):
+                with st.form(f"edit_form_{jid}"):
+                    st.markdown("#### Edit Job Opening")
+                    e_title = st.text_input("Job Title", value=job.get("title", ""))
+                    e_company = st.text_input("Company Name", value=job.get("company", "TechCorp"))
+                    e_desc = st.text_area("Job Description", value=job.get("description", "") or "", height=90)
+                    
+                    c_loc, c_type, c_exp = st.columns(3)
+                    with c_loc:
+                        e_location = st.text_input("Location", value=job.get("location", "Remote"))
+                    with c_type:
+                        e_emp_type = st.selectbox(
+                            "Employment Type",
+                            ["Full-time", "Part-time", "Contract", "Internship"],
+                            index=["Full-time", "Part-time", "Contract", "Internship"].index(emp_type) if emp_type in ["Full-time", "Part-time", "Contract", "Internship"] else 0
+                        )
+                    with c_exp:
+                        e_exp_level = st.selectbox(
+                            "Experience Level",
+                            ["Entry-level", "Mid-level", "Senior", "Lead / Principal"],
+                            index=["Entry-level", "Mid-level", "Senior", "Lead / Principal"].index(exp_level) if exp_level in ["Entry-level", "Mid-level", "Senior", "Lead / Principal"] else 1
+                        )
+
+                    c_req, c_pref = st.columns(2)
+                    with c_req:
+                        e_req = st.text_input("Required Skills (comma-separated)", value=job.get("required_skills", ""))
+                    with c_pref:
+                        e_pref = st.text_input("Preferred Skills (comma-separated)", value=job.get("preferred_skills", ""))
+
+                    e_status = st.selectbox("Status", ["ACTIVE", "INACTIVE"], index=0 if is_active else 1)
+
+                    if st.form_submit_button("Save Changes to Database", type="primary"):
+                        if len(e_title.strip()) < 2:
+                            C.callout("error", "Validation Error", "Job title must be at least 2 characters long.")
+                        else:
+                            api.call("PATCH", f"/jobs/{jid}", json={
+                                "title": e_title.strip(),
+                                "company": e_company.strip(),
+                                "description": e_desc.strip(),
+                                "location": e_location.strip(),
+                                "employment_type": e_emp_type,
+                                "experience_level": e_exp_level,
+                                "required_skills": e_req.strip(),
+                                "preferred_skills": e_pref.strip(),
+                                "status": e_status
+                            })
+                            api.flash("success", "Job Position Updated", f"Successfully saved changes for '{e_title.strip()}'.")
                             st.rerun()
 
-    # 2. Competency Rubrics Table for the selected job
-    with st.container(border=True):
-        C.section(f"Evaluation Competencies: {job['title']}", "Core competencies and scoring weight distribution for this position.")
-        tw = sum(c["weight"] for c in job["competencies"]) or 1
-        C.table(
-            [("name", "Competency", "strong"), ("weight", "Weight"), ("share", "Share of Evaluation"), ("keywords", "Target Keywords")],
-            [{"name": c["name"], "weight": f"{c['weight']:.1f}x", "share": C.score_bar(c["weight"] / tw * 100, 100),
-              "keywords": ", ".join(c.get("keywords", [])[:5]) or "-"} for c in job["competencies"]]
-        )
 
-        with st.expander("Detailed Rubric Criteria & Seed Questions"):
-            for c in job["competencies"]:
-                st.markdown(f"**{c['name']}** (Weight: {c.get('weight', 1.0)})")
-                if c.get("rubric"):
-                    for lvl, txt in sorted(c.get("rubric", {}).items()):
-                        st.markdown(f"• *Level {lvl}:* {txt}")
-                for q in c.get("questions", []):
-                    st.caption(f"Suggested Opening Question: {q}")
-                st.markdown("---")
-
-    # 3. Overview directory table showing all configured jobs
-    C.section("All Job Positions", "Quickly compare candidate volumes across all positions in your workspace.")
-    job_rows = []
-    for pj in ov["per_job"]:
-        is_active = (pj["job_id"] == selected)
-        job_rows.append({
-            "status": C.badge("Active", "info", dot=True) if is_active else C.badge("Switch", "neutral", dot=False),
-            "job_id": str(pj["job_id"]),
-            "title": f"**{pj['title']}**" if is_active else pj["title"],
-            "applicants": pj.get("applicants", 0),
-            "scored": pj.get("scored", 0),
-            "shortlisted": pj.get("shortlisted", 0),
-        })
-
-    C.table([
-        ("status", "Status"),
-        ("job_id", "ID"),
-        ("title", "Job Title"),
-        ("applicants", "Total Candidates", "r"),
-        ("scored", "Screened", "r"),
-        ("shortlisted", "Shortlisted", "r")
-    ], job_rows)
-
-
-def create_view():
-    C.callout(
-        "info",
-        "Define Role Competencies",
-        "Add one row per competency. Well-defined criteria ensure consistent, fair scoring across both resume screening and the live interview."
+def create_job_view():
+    C.section(
+        "Create a New Job Opening",
+        "Fill in the role information and requirements. All candidates will be semantically scored against these criteria."
     )
-    with st.form("create_job"):
-        title = st.text_input("Job Title", placeholder="e.g. Senior Backend Engineer")
-        desc = st.text_area("Job Description & Requirements", placeholder="Role responsibilities, seniority level, tech stack...", height=110)
-        st.markdown("**Role Competencies & Scoring Weights**")
-        starter = pd.DataFrame([{"name": "", "weight": 1.0, "description": "", "keywords": "", "question": "",
-                                 "rubric_basic": "", "rubric_working": "", "rubric_strong": ""}])
-        edited = st.data_editor(starter, column_config=EDITOR_COLUMNS, num_rows="dynamic", hide_index=True, use_container_width=True, key="comp_editor")
-        submit = st.form_submit_button("Create Job Position", type="primary")
-    if submit:
-        errors = []
-        if len((title or "").strip()) < 2:
-            errors.append("Job title is required (at least 2 characters).")
-        clean, comp_errors = H.competency_rows_valid(_records(edited))
-        errors += comp_errors
-        if errors:
-            C.callout("error", "Please fix the following", " ".join(errors))
-        else:
-            res = api.call("POST", "/jobs", json={"title": title.strip(), "description": desc.strip(), "competencies": clean})
-            if res:
-                api.select_job_next_run(res["id"])
-                api.flash("success", "Job created", f"'{res['title']}' is ready. Next: upload resumes on the Candidates page.")
-                st.rerun()
 
-    with st.expander("Import Job from JSON (Advanced)"):
-        st.caption("Upload or paste a standardized JSON job specification.")
-        txt = st.text_area("Job JSON Specification", value=SAMPLE.read_text() if SAMPLE.exists() else "{}", height=160, key="json_import")
-        if st.button("Import JSON", key="btn_import_json"):
-            try:
-                res = api.call("POST", "/jobs", json=json.loads(txt))
-                if res:
-                    api.select_job_next_run(res["id"])
-                    api.flash("success", "Job imported", f"'{res['title']}' loaded.")
-                    st.rerun()
-            except Exception as e:
-                C.callout("error", "Invalid JSON", str(e))
+    with st.container(border=True):
+        with st.form("create_new_job_form"):
+            st.markdown("#### 1. Basic Information")
+            c_t, c_c = st.columns([2, 1.5])
+            with c_t:
+                title = st.text_input("Job Title *", placeholder="e.g. Senior Backend Python Developer")
+            with c_c:
+                company = st.text_input("Company Name *", value="TechCorp", placeholder="e.g. Acme Tech Solutions")
+
+            desc = st.text_area(
+                "Job Description & Responsibilities *",
+                placeholder="Describe role responsibilities, team environment, and day-to-day deliverables...",
+                height=110
+            )
+
+            c_l, c_et, c_el = st.columns(3)
+            with c_l:
+                location = st.text_input("Location", value="Remote", placeholder="e.g. Remote, New York, NY, Hybrid")
+            with c_et:
+                employment_type = st.selectbox(
+                    "Employment Type",
+                    ["Full-time", "Part-time", "Contract", "Internship"],
+                    index=0
+                )
+            with c_el:
+                experience_level = st.selectbox(
+                    "Experience Level",
+                    ["Entry-level", "Mid-level", "Senior", "Lead / Principal"],
+                    index=1
+                )
+
+            st.markdown("#### 2. Candidate Requirements")
+            c_req, c_pref = st.columns(2)
+            with c_req:
+                required_skills = st.text_input(
+                    "Required Skills (comma-separated) *",
+                    placeholder="e.g. Python, FastAPI, SQL, REST APIs"
+                )
+            with c_pref:
+                preferred_skills = st.text_input(
+                    "Preferred Skills (comma-separated)",
+                    placeholder="e.g. Docker, Kubernetes, AWS, Redis"
+                )
+
+            c_min_exp, c_edu = st.columns(2)
+            with c_min_exp:
+                min_experience = st.number_input("Minimum Experience (Years)", min_value=0.0, max_value=25.0, value=3.0, step=0.5)
+            with c_edu:
+                education = st.text_input("Educational Requirements (Optional)", placeholder="e.g. B.S. in Computer Science or equivalent")
+
+            st.markdown("#### 3. Listing Status")
+            status_choice = st.radio(
+                "Initial Status",
+                ["Active (Accepting Applications)", "Inactive (Draft / Hidden)"],
+                horizontal=True
+            )
+            initial_status = "ACTIVE" if "Active" in status_choice else "INACTIVE"
+
+            st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+            submit = st.form_submit_button("🚀 Create Job Opening", type="primary", use_container_width=True)
+
+        if submit:
+            errors = []
+            if len((title or "").strip()) < 2:
+                errors.append("Job Title must be at least 2 characters long.")
+            if len((desc or "").strip()) < 5:
+                errors.append("Please provide a meaningful Job Description.")
+            if len((required_skills or "").strip()) < 2:
+                errors.append("Please specify at least one required skill.")
+
+            if errors:
+                C.callout("error", "Validation Error", " ".join(errors))
+            else:
+                with st.spinner("Creating job opening in database..."):
+                    res = api.call("POST", "/jobs", json={
+                        "title": title.strip(),
+                        "company": company.strip() if company else "TechCorp",
+                        "description": desc.strip(),
+                        "location": location.strip() if location else "Remote",
+                        "employment_type": employment_type,
+                        "experience_level": experience_level,
+                        "required_skills": required_skills.strip(),
+                        "preferred_skills": preferred_skills.strip() if preferred_skills else "",
+                        "status": initial_status
+                    })
+                    if res:
+                        api.flash("success", "Job Created Successfully", f"Job opening '{title.strip()}' has been posted and saved to the database.")
+                        st.rerun()

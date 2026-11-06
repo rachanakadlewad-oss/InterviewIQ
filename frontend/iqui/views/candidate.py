@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 from .. import api, components as C, helpers as H
 
 voice = components.declare_component("interviewiq_voice", path=str(Path(__file__).resolve().parents[2] / "voice_component"))
-PAGES = ["My Application", "Interview Details", "Identity Verification", "Join Interview", "My Feedback"]
+PAGES = ["Explore Jobs", "My Application", "Interview Details", "Identity Verification", "Join Interview", "My Feedback"]
 
 
 def token():
@@ -19,23 +19,90 @@ def me():
     return api.call("GET", "/portal/me", token=token(), quiet=True)
 
 
-def sign_in():
-    C.page_header("Candidate portal", "Sign in with the access token from your interview confirmation.", "Welcome")
-    _, mid, _ = st.columns([1, 2, 1])
-    with mid:
+def explore_jobs(info=None):
+    C.page_header("Explore Open Positions", "Browse available opportunities, see requirements, and apply directly.", "Careers")
+    jobs = api.call("GET", "/portal/jobs", quiet=True) or []
+    if not jobs:
+        C.empty_state("No open positions available", "Recruiters have not posted any active positions yet. Check back soon!", icon="💼")
+        return
+
+    st.markdown(f"<div style='font-size:0.95rem;color:var(--muted);margin-bottom:1rem;'>Showing <b>{len(jobs)}</b> open position{'s' if len(jobs) != 1 else ''}</div>", unsafe_allow_html=True)
+
+    for j in jobs:
         with st.container(border=True):
-            t = st.text_input("Access token", type="password", placeholder="Paste the token you received")
-            if st.button("Sign in", type="primary", use_container_width=True):
-                ok, data = api.request("GET", "/portal/me", token=t.strip())
-                if ok:
-                    st.session_state["cand_token"] = t.strip()
-                    st.rerun()
-                else:
-                    C.callout("error", "We could not sign you in", "Check the token and try again, or ask the recruiter to resend it.")
-        st.caption("Your token only opens your own application. It does not give access to other candidates or to recruiter information.")
+            col_t, col_badge = st.columns([3, 1])
+            with col_t:
+                st.markdown(f"### {C.esc(j['title'])}")
+                company = C.esc(j.get('company', 'TechCorp'))
+                loc = C.esc(j.get('location', 'Remote'))
+                emp_type = C.esc(j.get('employment_type', 'Full-time'))
+                exp_lvl = C.esc(j.get('experience_level', 'Mid-level'))
+                st.markdown(f"**{company}** &bull; 📍 {loc} &bull; 💼 {emp_type} &bull; 🎯 {exp_lvl}")
+            with col_badge:
+                st.markdown("<div style='text-align:right;'><span class='iq-badge success'>Active Role</span></div>", unsafe_allow_html=True)
+
+            if j.get("description"):
+                st.markdown(f"<div style='color:var(--text2);margin:0.75rem 0;'>{C.esc(j['description'])}</div>", unsafe_allow_html=True)
+
+            req = [s.strip() for s in j.get("required_skills", "").split(",") if s.strip()]
+            pref = [s.strip() for s in j.get("preferred_skills", "").split(",") if s.strip()]
+
+            if req:
+                st.markdown("**Required Skills:** " + " ".join([f"<span class='iq-badge neutral'>{C.esc(s)}</span>" for s in req]), unsafe_allow_html=True)
+            if pref:
+                st.markdown("**Preferred Skills:** " + " ".join([f"<span class='iq-badge neutral'>{C.esc(s)}</span>" for s in pref]), unsafe_allow_html=True)
+
+            with st.expander(f"📝 Apply for {j['title']}", expanded=False):
+                st.markdown("Submit your resume. Our LLM-powered matching engine evaluates technical skills, experience relevance, and project evidence.")
+                u_res = st.file_uploader("Upload Resume (PDF, TXT, DOCX)", type=["pdf", "txt", "docx"], key=f"portal_res_{j['id']}")
+                u_photo = st.file_uploader("Upload Profile / Identity Photo (optional)", type=["jpg", "jpeg", "png"], key=f"portal_photo_{j['id']}")
+
+                if st.button("🚀  Submit Application & Run AI Match", key=f"btn_apply_{j['id']}", type="primary", disabled=not u_res):
+                    files = {"file": (u_res.name, u_res.getvalue())}
+                    if u_photo:
+                        files["photo"] = (u_photo.name, u_photo.getvalue())
+                    with st.spinner("Uploading resume and running LLM candidate evaluation..."):
+                        ok, r = api.request("POST", f"/portal/jobs/{j['id']}/apply", files=files)
+                    if ok:
+                        if isinstance(r, dict) and r.get("access_token"):
+                            st.session_state["cand_token"] = r["access_token"]
+                        C.callout(
+                            "success",
+                            "Application submitted successfully!",
+                            f"Your application has been received and evaluated. AI Match Score: {r.get('ai_score', 'Evaluated')}/100."
+                        )
+                        st.button("👉 Proceed to My Application", on_click=api.go, args=("My Application", "candidate"), type="primary", key=f"nav_to_app_{j['id']}")
+                    else:
+                        C.callout("error", "Application could not be submitted", r)
+
+
+def sign_in():
+    C.page_header("Candidate Portal", "Welcome to your candidate interview & application workspace.", "Candidate Portal")
+    t1, t2 = st.tabs(["💼 Explore Open Positions", "🔑 Sign in with Interview Access Token"])
+    with t1:
+        explore_jobs()
+    with t2:
+        _, mid, _ = st.columns([1, 2, 1])
+        with mid:
+            with st.container(border=True):
+                st.markdown("#### Enter Your Interview Access Token")
+                st.markdown("If you received an access token from a recruiter or via interview invite, enter it below:")
+                t = st.text_input("Access token", type="password", placeholder="Paste the token you received", key="manual_token_input")
+                if st.button("Sign in with Token", type="primary", use_container_width=True, key="manual_token_btn"):
+                    ok, data = api.request("GET", "/portal/me", token=t.strip())
+                    if ok:
+                        st.session_state["cand_token"] = t.strip()
+                        st.rerun()
+                    else:
+                        C.callout("error", "We could not sign you in", "Check the token and try again, or ask the recruiter to resend it.")
+            st.caption("Your token only opens your own application. It does not give access to other candidates or to recruiter information.")
 
 
 def render(page):
+    if page == "Explore Jobs":
+        explore_jobs()
+        return
+
     info = me()
     if not info:
         if token():
@@ -45,7 +112,7 @@ def render(page):
         return
     if info.get("access_token") and not st.session_state.get("cand_token"):
         st.session_state["cand_token"] = info["access_token"]
-    {"My Application": my_application, "Interview Details": interview_details, "Identity Verification": identity,
+    {"Explore Jobs": lambda _: explore_jobs(), "My Application": my_application, "Interview Details": interview_details, "Identity Verification": identity,
      "Join Interview": join_interview, "My Feedback": feedback}[page](info)
 
 
@@ -61,7 +128,20 @@ def my_application(info):
     head, body, tone = H.candidate_message(info["status"])
     C.stepper(H.candidate_steps(info["status"]))
     C.callout(tone, head, body)
-    if info["slot"]:
+    if info.get("ai_score") is not None:
+        st.markdown(
+            f'''<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.9rem 1.1rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <div style="font-size:0.82rem;color:var(--muted);font-weight:600;text-transform:uppercase;">AI Match & Evaluation Score</div>
+                    <div style="font-size:1.1rem;font-weight:700;color:var(--text);">Evaluated for {C.esc(info.get('job_title', 'Role'))}</div>
+                </div>
+                <div style="font-size:1.5rem;font-weight:800;color:var(--primary);background:var(--subtle);padding:0.3rem 0.8rem;border-radius:var(--radius-sm);border:1px solid var(--border);">
+                    {info['ai_score']}<span style="font-size:0.85rem;color:var(--muted);">/100</span>
+                </div>
+            </div>''',
+            unsafe_allow_html=True
+        )
+    if info.get("slot"):
         C.kv([("Role", info["job_title"]), ("Interview slot", f"{H.fmt_dt(info['slot']['start'])} - {H.fmt_dt(info['slot']['end'], False)}"), ("Status", H.candidate_message(info['status'])[0])])
     nxt = {"SCHEDULED": "Identity Verification", "IDENTITY_PASSED": "Join Interview", "INTERVIEW_IN_PROGRESS": "Join Interview",
            "ASSESSED": "My Feedback", "DECIDED": "My Feedback"}.get(info["status"])

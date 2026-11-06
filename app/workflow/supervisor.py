@@ -117,7 +117,33 @@ class Supervisor:
                 a.resume_summary = r.output.summary
                 a.resume_score = scoring.resume_total(job, {s.competency_id: s.score for s in r.output.scores})
                 a.scoring_source, a.scoring_error = r.source, ""
-                if a.status in ("PARSED", "SCORING_FAILED"):
+
+                # Genuine LLM candidate-job matching
+                try:
+                    from app.services.ai_matcher import evaluate_candidate_for_job
+                    job_eval_dict = {
+                        "title": job_row.title,
+                        "company": getattr(job_row, "company", "TechCorp") or "TechCorp",
+                        "description": job_row.description or "",
+                        "required_skills": getattr(job_row, "required_skills", "") or "",
+                        "preferred_skills": getattr(job_row, "preferred_skills", "") or "",
+                        "experience_level": getattr(job_row, "experience_level", "Mid-level") or "Mid-level",
+                        "location": getattr(job_row, "location", "Remote") or "Remote",
+                        "competencies": jload(job_row.competencies_json, [])
+                    }
+                    ai_score_val, eval_dict, explanation, source = evaluate_candidate_for_job(
+                        job=job_eval_dict,
+                        resume_text=a.resume_text,
+                        profile=prof.model_dump(),
+                        llm=self.llm,
+                        settings=self.s
+                    )
+                    a.ai_score = ai_score_val
+                    a.ai_reasoning = jdump(eval_dict)
+                except Exception as eval_err:
+                    log.warning("Semantic evaluator in supervisor encountered: %s", eval_err)
+
+                if a.status in ("PARSED", "SCORING_FAILED", "APPLIED"):
                     transition(a, "SCORED")
                 res["scored"].append(aid)
             except AgentError as e:
