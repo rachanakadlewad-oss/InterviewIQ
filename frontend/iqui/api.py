@@ -129,7 +129,6 @@ PAGE_MAP = {
     "Shortlist & Scheduling": "Candidates",
     "Identity Review": "Interviews",
     "Reports & Decisions": "Reports",
-    "Settings & Demo Info": "Settings",
 }
 
 
