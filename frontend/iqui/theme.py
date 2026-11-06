@@ -175,6 +175,15 @@ padding:.8rem 1rem;background:#0D1424;border-bottom:1px solid var(--border);whit
 [data-baseweb="input"]:focus-within,[data-baseweb="textarea"]:focus-within,[data-baseweb="select"]>div:focus-within{
   border-color:var(--primary)!important;box-shadow:0 0 0 1px var(--primary)!important;
 }
+[data-baseweb="popover"],[data-baseweb="menu"]{
+  background:#111B30!important;border:1px solid var(--border)!important;border-radius:var(--radius-sm)!important;box-shadow:0 10px 25px rgba(0,0,0,0.5)!important;
+}
+[data-baseweb="menu"] li{
+  color:var(--text2)!important;background:transparent!important;font-size:0.9rem!important;padding:0.6rem 0.9rem!important;
+}
+[data-baseweb="menu"] li:hover,[data-baseweb="menu"] li[aria-selected="true"]{
+  background:rgba(37,99,235,0.22)!important;color:#FFFFFF!important;
+}
 label[data-testid="stWidgetLabel"] p{color:var(--text2);font-size:.88rem;font-weight:600}
 
 [data-baseweb="tab-list"]{gap:.5rem;border-bottom:1px solid var(--border);margin-bottom:.95rem}
