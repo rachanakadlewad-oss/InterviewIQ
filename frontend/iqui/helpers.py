@@ -4,11 +4,22 @@ from typing import List, Optional, Tuple
 
 # status -> (recruiter label, badge tone)
 STATUS = {
-    "PARSED": ("Parsed", "neutral"), "SCORING_FAILED": ("Scoring failed", "error"), "SCORED": ("Scored", "info"),
-    "SHORTLISTED": ("Shortlisted", "info"), "SCHEDULED": ("Scheduled", "info"), "HUMAN_REVIEW": ("Identity review", "warning"),
-    "IDENTITY_PASSED": ("Identity verified", "success"), "INTERVIEW_IN_PROGRESS": ("Interview in progress", "warning"),
-    "INTERVIEW_COMPLETE": ("Assessing", "info"), "ASSESSED": ("Awaiting decision", "warning"),
-    "ASSESSMENT_FAILED": ("Assessment failed", "error"), "DECIDED": ("Decided", "success"),
+    "PARSED": ("Pending Review", "neutral"),
+    "PENDING_REVIEW": ("Pending Review", "neutral"),
+    "UNDER_REVIEW": ("Under Review", "warning"),
+    "SCORING_FAILED": ("Scoring failed", "error"),
+    "SCORED": ("Scored", "info"),
+    "SHORTLISTED": ("Shortlisted", "info"),
+    "ACCEPTED": ("Accepted", "success"),
+    "SCHEDULED": ("Scheduled", "info"),
+    "HUMAN_REVIEW": ("Identity review", "warning"),
+    "IDENTITY_PASSED": ("Identity verified", "success"),
+    "INTERVIEW_IN_PROGRESS": ("Interview in progress", "warning"),
+    "INTERVIEW_COMPLETE": ("Assessing", "info"),
+    "ASSESSED": ("Awaiting decision", "warning"),
+    "ASSESSMENT_FAILED": ("Assessment failed", "error"),
+    "DECIDED": ("Decided", "success"),
+    "REJECTED": ("Rejected", "error"),
     "REJECTED_AT_REVIEW": ("Closed at review", "error"),
 }
 DECISION_TONE = {"NEXT_COMPETENCY": "info", "NARROW_FOLLOW_UP": "warning", "BROAD_PIVOT": "success", "CONCLUDE": "neutral"}

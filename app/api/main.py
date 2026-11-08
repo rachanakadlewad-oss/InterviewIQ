@@ -366,16 +366,27 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             q = q.where(Application.job_id.in_(recruiter_job_ids))
         if job_id:
             q = q.where(Application.job_id == job_id)
-        if status and status.upper() != "ALL":
-            st_up = status.upper()
-            if st_up == "SHORTLISTED":
-                q = q.where((Application.shortlisted == True) | (Application.status == "SHORTLISTED"))
+        if status:
+            st_up = status.upper().strip()
+            if st_up in ("ACTIVE", "ACTIVE_ONLY"):
+                q = q.where(Application.status != "REJECTED")
+            elif st_up == "SHORTLISTED":
+                q = q.where((Application.shortlisted == True) | (Application.status == "SHORTLISTED")).where(Application.status != "REJECTED")
             elif st_up == "REJECTED":
                 q = q.where(Application.status == "REJECTED")
-            elif st_up in ("PENDING", "UNDER_REVIEW"):
-                q = q.where(Application.status.in_(["PARSED", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED"]))
+            elif st_up in ("PENDING", "PENDING_REVIEW", "UNDER_REVIEW"):
+                q = q.where(Application.status.in_(["PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED"]))
+            elif st_up in ("ACCEPTED", "DECIDED"):
+                q = q.where(Application.status.in_(["ACCEPTED", "DECIDED"])).where(Application.status != "REJECTED")
+            elif st_up == "SCHEDULED":
+                q = q.where(Application.status == "SCHEDULED")
+            elif st_up in ("ALL", "ALL_CANDIDATES"):
+                pass  # include all
             else:
                 q = q.where(Application.status == st_up)
+        else:
+            # Default to active candidates (exclude REJECTED from the main active listing)
+            q = q.where(Application.status != "REJECTED")
 
         apps = db.execute(q.order_by(Application.id.desc())).scalars().all()
         results = []
@@ -397,6 +408,7 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
 
             eval_info = jload(a.ai_reasoning, {})
             results.append({
+                "id": a.id,
                 "application_id": a.id,
                 "job_id": a.job_id,
                 "job_title": titles.get(a.job_id, f"Job #{a.job_id}"),
@@ -405,16 +417,19 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
                 "name": cand_name,
                 "email": cand_email,
                 "status": a.status,
-                "shortlisted": bool(a.shortlisted),
+                "shortlisted": bool(a.shortlisted and a.status != "REJECTED"),
                 "resume_score": a.resume_score or a.ai_score,
                 "ai_score": a.ai_score if a.ai_score is not None else a.resume_score,
                 "ai_reasoning": eval_info,
+                "ai_breakdown": eval_info,
                 "scoring_source": a.scoring_source or "semantic_rules",
                 "scoring_error": a.scoring_error,
                 "skills": skills,
                 "experience_years": prof.get("experience_years", 0),
                 "experience": prof.get("experience", []),
                 "education": prof.get("education", []),
+                "projects": prof.get("projects", []),
+                "summary": prof.get("summary", ""),
                 "resume_filename": a.resume_filename,
                 "resume_text": a.resume_text,
                 "has_reference_photo": bool(a.photo_path),
@@ -423,27 +438,68 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             })
         return results
 
+    @app.get("/recruiter/candidates/counts", dependencies=[Depends(recruiter)])
+    def get_candidate_counts(
+        job_id: Optional[int] = None,
+        current_user: Optional[User] = Depends(recruiter),
+        db=Depends(get_db)
+    ):
+        user_id = current_user.id if current_user else 1
+        recruiter_job_ids = [j.id for j in db.execute(select(Job).where((Job.recruiter_id == user_id) | (Job.recruiter_id.is_(None)))).scalars()]
+
+        q = select(Application)
+        if recruiter_job_ids:
+            q = q.where(Application.job_id.in_(recruiter_job_ids))
+        if job_id:
+            q = q.where(Application.job_id == job_id)
+
+        apps = db.execute(q).scalars().all()
+        total = len(apps)
+        rejected = sum(1 for a in apps if a.status == "REJECTED")
+        shortlisted = sum(1 for a in apps if (a.shortlisted or a.status == "SHORTLISTED") and a.status != "REJECTED")
+        accepted = sum(1 for a in apps if a.status in ("ACCEPTED", "DECIDED") and a.status != "REJECTED")
+        pending = sum(1 for a in apps if a.status in ("PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED") and not a.shortlisted and a.status != "REJECTED")
+        active = total - rejected
+
+        return {
+            "total": total,
+            "active": active,
+            "shortlisted": shortlisted,
+            "pending": pending,
+            "accepted": accepted,
+            "rejected": rejected
+        }
+
     class StatusUpdateIn(BaseModel):
-        action: str
+        action: Optional[str] = None
+        status: Optional[str] = None
         notes: Optional[str] = None
 
     @app.patch("/applications/{application_id}/status", dependencies=[Depends(recruiter)])
+    @app.patch("/recruiter/applications/{application_id}/status", dependencies=[Depends(recruiter)])
     def update_application_status(application_id: int, body: StatusUpdateIn, db=Depends(get_db)):
         a = db.get(Application, application_id)
         if not a:
             raise NotFound("application not found")
-        act = body.action.upper()
-        if act == "SHORTLIST":
+        act = (body.action or body.status or "").upper()
+        if act in ("SHORTLIST", "SHORTLISTED"):
             a.shortlisted = True
             a.status = "SHORTLISTED"
-        elif act == "REJECT":
+        elif act in ("REJECT", "REJECTED"):
             a.shortlisted = False
             a.status = "REJECTED"
-        elif act in ("PENDING", "UNDER_REVIEW"):
+            # Release any booked interview slot so rejected candidate cannot enter interview workflow
+            slot = db.execute(select(Slot).where(Slot.application_id == a.id)).scalar_one_or_none()
+            if slot:
+                slot.application_id = None
+        elif act in ("PENDING", "PENDING_REVIEW", "UNDER_REVIEW", "ACTIVE"):
             a.shortlisted = False
-            a.status = "UNDER_REVIEW"
+            a.status = "PENDING_REVIEW"
+        elif act in ("ACCEPT", "ACCEPTED"):
+            a.shortlisted = True
+            a.status = "ACCEPTED"
         else:
-            raise HTTPException(400, f"Unsupported action '{body.action}'. Supported: SHORTLIST, REJECT, PENDING")
+            raise HTTPException(400, f"Unsupported action '{body.action or body.status}'. Supported: SHORTLIST, REJECT, PENDING, ACCEPT")
         db.commit()
         return {
             "application_id": a.id,
@@ -596,14 +652,17 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
         j = db.get(Job, job_id)
         if not j:
             raise NotFound("job not found")
+        skills_changed = False
         if body.title is not None and body.title.strip():
             j.title = body.title.strip()
+            skills_changed = True
         if body.company is not None:
             j.company = body.company.strip()
         if body.description is not None:
             j.description = body.description.strip()
         if body.required_skills is not None:
             j.required_skills = body.required_skills.strip()
+            skills_changed = True
         if body.preferred_skills is not None:
             j.preferred_skills = body.preferred_skills.strip()
         if body.experience_level is not None:
@@ -614,6 +673,26 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             j.employment_type = body.employment_type.strip()
         if body.status is not None:
             j.status = body.status.strip().upper()
+
+        if skills_changed:
+            skills = [sk.strip() for sk in (j.required_skills or "").split(",") if sk.strip()] or [j.title]
+            comps = []
+            for idx, sk in enumerate(skills[:4], 1):
+                comps.append({
+                    "id": f"c_{idx}_{sk.lower().replace(' ', '_')[:20]}",
+                    "name": sk,
+                    "description": f"Demonstrated expertise and hands-on capability in {sk}",
+                    "weight": 1.0,
+                    "rubric": {
+                        "1": f"Basic theoretical awareness of {sk}",
+                        "3": f"Solid working proficiency with production experience in {sk}",
+                        "5": f"Advanced architectural leadership and mastery in {sk}"
+                    },
+                    "questions": [f"Can you describe a challenging technical problem you solved using {sk}?"],
+                    "keywords": [sk]
+                })
+            j.competencies_json = jdump(comps)
+
         db.commit()
         return {
             "id": j.id,
@@ -625,7 +704,8 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             "preferred_skills": j.preferred_skills,
             "location": j.location,
             "employment_type": j.employment_type,
-            "experience_level": j.experience_level
+            "experience_level": j.experience_level,
+            "competencies": jload(j.competencies_json, [])
         }
 
     @app.delete("/jobs/{job_id}", dependencies=[Depends(recruiter)])
@@ -669,17 +749,59 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
         if profile.email:
             candidate_user = db.execute(select(User).where(func.lower(User.email) == profile.email.strip().lower(), User.role == "candidate")).scalar_one_or_none()
 
-        a = Application(job_id=job_id, candidate_name=profile.name, email=profile.email, status="PARSED",
-                        resume_filename=file.filename or "", resume_text=text, profile_json=jdump(profile.model_dump()),
-                        access_token=new_access_token(), user_id=candidate_user.id if candidate_user else None)
-        db.add(a); db.flush()
+        # Duplicate resume detection: check if application already exists for this job with same email or name
+        existing_app = None
+        if profile.email and profile.email.strip():
+            existing_app = db.execute(
+                select(Application).where(
+                    Application.job_id == job_id,
+                    func.lower(Application.email) == profile.email.strip().lower()
+                )
+            ).scalars().first()
+        if not existing_app and profile.name and profile.name.strip():
+            existing_app = db.execute(
+                select(Application).where(
+                    Application.job_id == job_id,
+                    func.lower(Application.candidate_name) == profile.name.strip().lower()
+                )
+            ).scalars().first()
+
+        if existing_app:
+            a = existing_app
+            a.resume_filename = file.filename or a.resume_filename
+            a.resume_text = text
+            a.profile_json = jdump(profile.model_dump())
+            if profile.name:
+                a.candidate_name = profile.name
+            if profile.email:
+                a.email = profile.email
+            if candidate_user and not a.user_id:
+                a.user_id = candidate_user.id
+            if a.status in ("PARSED", "SCORING_FAILED"):
+                a.status = "PENDING_REVIEW"
+        else:
+            cand_name = profile.name or (file.filename.rsplit(".", 1)[0].replace("_", " ").title() if file.filename else "Candidate")
+            a = Application(
+                job_id=job_id,
+                candidate_name=cand_name,
+                email=profile.email or "",
+                status="PENDING_REVIEW",
+                resume_filename=file.filename or "",
+                resume_text=text,
+                profile_json=jdump(profile.model_dump()),
+                access_token=new_access_token(),
+                user_id=candidate_user.id if candidate_user else None
+            )
+            db.add(a)
+            db.flush()
+
         photo_bytes = (await photo.read()) if photo else embedded_photo
         if photo_bytes:
             p = s.subdir("reference_photos") / f"ref_{a.id}_{uuid.uuid4().hex[:6]}.img"
             p.write_bytes(photo_bytes)
             a.photo_path = str(p)
 
-        # Immediate AI evaluation
+        # Immediate AI evaluation against the correct selected job
         job_dict = {
             "title": job.title,
             "company": getattr(job, "company", "TechCorp") or "TechCorp",
@@ -704,7 +826,8 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
 
         db.commit()
         return {"application_id": a.id, "name": a.candidate_name, "email": a.email, "has_reference_photo": bool(a.photo_path),
-                "skills": profile.skills, "ai_score": a.ai_score, "recommendation": eval_dict.get("recommendation")}
+                "skills": profile.skills, "ai_score": a.ai_score, "recommendation": eval_dict.get("recommendation"),
+                "status": a.status, "job_title": job.title}
 
     @app.get("/jobs/{job_id}/applications", dependencies=[Depends(recruiter)])
     def list_apps(job_id: int, db=Depends(get_db)):

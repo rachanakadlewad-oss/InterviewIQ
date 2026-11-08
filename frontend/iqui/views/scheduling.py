@@ -27,8 +27,8 @@ def shortlist_section(job_id: int, job_title: str, apps: list, cfg: dict):
         st.button("Go to Candidates", on_click=api.go, args=("Candidates",))
         return
 
-    # 1. Sort strictly in descending order of resume score
-    sorted_apps = H.sort_candidates_by_score(apps)
+    # 1. Sort strictly in descending order of resume score (exclude rejected)
+    sorted_apps = [a for a in H.sort_candidates_by_score(apps) if a.get("status") != "REJECTED"]
     selectable_apps = [a for a in sorted_apps if a["status"] in ("SCORED", "SHORTLISTED")]
     locked_apps = [a for a in sorted_apps if a["status"] not in ("SCORED", "SHORTLISTED")]
 

@@ -156,10 +156,24 @@ def get_recruiter_candidates(job_id: Optional[int] = None, status: Optional[str]
     return call("GET", f"/recruiter/candidates{qs}") or []
 
 
+def get_candidate_counts(job_id: Optional[int] = None) -> dict:
+    qs = f"?job_id={job_id}" if job_id else ""
+    return call("GET", f"/recruiter/candidates/counts{qs}", quiet=True) or {
+        "total": 0, "active": 0, "shortlisted": 0, "pending": 0, "accepted": 0, "rejected": 0
+    }
+
+
 def update_candidate_status(application_id: int, action: str, notes: Optional[str] = None) -> bool:
     ok, res = request("PATCH", f"/applications/{application_id}/status", json={"action": action, "notes": notes or ""})
     if ok:
-        flash("success", "Status Updated", f"Candidate status changed to {action.title()}.")
+        act_label = {
+            "SHORTLIST": "Shortlisted",
+            "REJECT": "Rejected",
+            "PENDING": "Moved to Review Queue",
+            "PENDING_REVIEW": "Moved to Review Queue",
+            "ACCEPT": "Accepted"
+        }.get(action.upper(), action.title())
+        flash("success", "Candidate Status Updated", f"Candidate #{application_id} marked as {act_label}.")
         return True
     flash("error", "Status Update Failed", str(res))
     return False

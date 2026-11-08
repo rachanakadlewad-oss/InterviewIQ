@@ -64,35 +64,33 @@ def jobs_directory_view():
             col_info, col_metrics, col_actions = st.columns([3.2, 1.8, 1.8], vertical_alignment="center")
 
             with col_info:
-                st.markdown(
-                    f'''<div>
-                        <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.25rem;">
-                            <span style="font-size:1.18rem;font-weight:750;color:var(--text);">{C.esc(title)}</span>
-                            {status_badge}
-                        </div>
-                        <div style="font-size:0.88rem;color:var(--text2);margin-bottom:0.2rem;">
-                            <b style="color:var(--text);">{C.esc(company)}</b> &nbsp;·&nbsp; {C.esc(location)} &nbsp;·&nbsp; {C.esc(emp_type)} &nbsp;·&nbsp; {C.esc(exp_level)}
-                        </div>
-                        <div style="font-size:0.78rem;color:var(--muted);">
-                            Created: {C.esc(created_date)} &nbsp;·&nbsp; Position ID: #{jid}
-                        </div>
-                    </div>''',
-                    unsafe_allow_html=True
+                C.html(
+                    f'<div>'
+                    f'<div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.25rem;">'
+                    f'<span style="font-size:1.18rem;font-weight:750;color:var(--text);">{C.esc(title)}</span>'
+                    f'{status_badge}'
+                    f'</div>'
+                    f'<div style="font-size:0.88rem;color:var(--text2);margin-bottom:0.2rem;">'
+                    f'<b style="color:var(--text);">{C.esc(company)}</b> &nbsp;·&nbsp; {C.esc(location)} &nbsp;·&nbsp; {C.esc(emp_type)} &nbsp;·&nbsp; {C.esc(exp_level)}'
+                    f'</div>'
+                    f'<div style="font-size:0.78rem;color:var(--muted);">'
+                    f'Created: {C.esc(created_date)} &nbsp;·&nbsp; Position ID: #{jid}'
+                    f'</div>'
+                    f'</div>'
                 )
 
             with col_metrics:
-                st.markdown(
-                    f'''<div style="display:flex;gap:1.2rem;align-items:center;">
-                        <div>
-                            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Applicants</div>
-                            <div style="font-size:1.45rem;font-weight:800;color:var(--text);">{applicants_count}</div>
-                        </div>
-                        <div style="border-left:1px solid var(--border);padding-left:1.2rem;">
-                            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Shortlisted</div>
-                            <div style="font-size:1.45rem;font-weight:800;color:var(--success);">{shortlisted_count}</div>
-                        </div>
-                    </div>''',
-                    unsafe_allow_html=True
+                C.html(
+                    f'<div style="display:flex;gap:1.2rem;align-items:center;">'
+                    f'<div>'
+                    f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Applicants</div>'
+                    f'<div style="font-size:1.45rem;font-weight:800;color:var(--text);">{applicants_count}</div>'
+                    f'</div>'
+                    f'<div style="border-left:1px solid var(--border);padding-left:1.2rem;">'
+                    f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Shortlisted</div>'
+                    f'<div style="font-size:1.45rem;font-weight:800;color:var(--success);">{shortlisted_count}</div>'
+                    f'</div>'
+                    f'</div>'
                 )
 
             with col_actions:
@@ -158,23 +156,30 @@ def jobs_directory_view():
 
                     e_status = st.selectbox("Status", ["ACTIVE", "INACTIVE"], index=0 if is_active else 1)
 
-                    if st.form_submit_button("Save Changes to Database", type="primary"):
+                    if st.form_submit_button("💾 Save Changes to Database", type="primary"):
                         if len(e_title.strip()) < 2:
                             C.callout("error", "Validation Error", "Job title must be at least 2 characters long.")
+                        elif len(e_desc.strip()) < 5:
+                            C.callout("error", "Validation Error", "Please provide a meaningful Job Description.")
                         else:
-                            api.call("PATCH", f"/jobs/{jid}", json={
-                                "title": e_title.strip(),
-                                "company": e_company.strip(),
-                                "description": e_desc.strip(),
-                                "location": e_location.strip(),
-                                "employment_type": e_emp_type,
-                                "experience_level": e_exp_level,
-                                "required_skills": e_req.strip(),
-                                "preferred_skills": e_pref.strip(),
-                                "status": e_status
-                            })
-                            api.flash("success", "Job Position Updated", f"Successfully saved changes for '{e_title.strip()}'.")
-                            st.rerun()
+                            with st.spinner("Saving changes to database..."):
+                                ok, resp = api.request("PATCH", f"/jobs/{jid}", json={
+                                    "title": e_title.strip(),
+                                    "company": e_company.strip(),
+                                    "description": e_desc.strip(),
+                                    "location": e_location.strip(),
+                                    "employment_type": e_emp_type,
+                                    "experience_level": e_exp_level,
+                                    "required_skills": e_req.strip(),
+                                    "preferred_skills": e_pref.strip(),
+                                    "status": e_status
+                                })
+                            if ok:
+                                api.flash("success", "Job details updated successfully!", f"Successfully updated job opening '{e_title.strip()}'.")
+                                st.toast("Job details updated successfully!", icon="✅")
+                                st.rerun()
+                            else:
+                                C.callout("error", "Save Failed", str(resp))
 
 
 def create_job_view():

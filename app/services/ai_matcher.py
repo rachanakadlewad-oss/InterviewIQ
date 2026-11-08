@@ -33,6 +33,10 @@ You must return ONLY a valid JSON object with the following schema:
     "score": <float between 0.0 and 100.0>,
     "assessment": "<2-3 sentence qualitative analysis of project accomplishments>"
   },
+  "educational_relevance": {
+    "score": <float between 0.0 and 100.0>,
+    "assessment": "<1-2 sentence qualitative analysis of educational background and qualification relevance>"
+  },
   "strengths": [
     "<Concise bullet point 1>",
     "<Concise bullet point 2>",
@@ -126,8 +130,27 @@ def _heuristic_evaluate(job: Dict[str, Any], resume_text: str, profile: Dict[str
 
     project_score = round(min(100.0, 40.0 + (action_count * 5.0) + (metric_count * 8.0) + (len(cand_projects) * 6.0)), 1)
 
-    # Combined Overall Score (45% Tech, 30% Experience, 25% Projects)
-    overall_score = round(min(100.0, max(15.0, (tech_score * 0.45) + (exp_score * 0.30) + (project_score * 0.25))), 1)
+    # 4. Educational Relevance Evaluation
+    cand_edu = profile.get("education") or []
+    edu_text = " ".join(cand_edu).lower()
+    has_stem = any(term in edu_text or term in low_resume for term in ["computer", "software", "information technology", "data science", "engineering", "b.tech", "b.e.", "m.tech", "m.s.", "b.s.", "bachelor", "master", "phd", "ph.d"])
+    has_degree = len(cand_edu) > 0 or has_stem
+
+    if has_stem:
+        edu_score = 95.0
+        edu_assessment = f"Candidate possesses relevant technical degree: {', '.join(cand_edu[:2]) if cand_edu else 'Technical/Engineering qualification confirmed'}."
+    elif has_degree:
+        edu_score = 75.0
+        edu_assessment = f"Candidate completed university education ({', '.join(cand_edu[:2]) if cand_edu else 'Degree completed'}) with demonstrated applied skills."
+    elif cand_exp_years >= 3.0:
+        edu_score = 80.0
+        edu_assessment = f"Practical industry track record ({cand_exp_years:.1f} years) demonstrates equivalent professional qualification."
+    else:
+        edu_score = 60.0
+        edu_assessment = "Foundational educational background; depth to be verified in technical screening."
+
+    # Combined Overall Score (40% Tech, 30% Experience, 20% Projects, 10% Education)
+    overall_score = round(min(100.0, max(15.0, (tech_score * 0.40) + (exp_score * 0.30) + (project_score * 0.20) + (edu_score * 0.10))), 1)
 
     # Strengths
     strengths = []
@@ -141,6 +164,8 @@ def _heuristic_evaluate(job: Dict[str, Any], resume_text: str, profile: Dict[str
         strengths.append("Resume provides verifiable measurable achievements and delivery impact.")
     if matched_pref:
         strengths.append(f"Demonstrates preferred skills including {', '.join(matched_pref[:3])}.")
+    if has_stem:
+        strengths.append("Educational background directly aligns with technical expectations.")
     if not strengths:
         strengths.append(f"Foundational exposure to core responsibilities of {job_title}.")
 
@@ -163,10 +188,12 @@ def _heuristic_evaluate(job: Dict[str, Any], resume_text: str, profile: Dict[str
     else:
         rec = "Not recommended for this role"
 
+    cand_display_name = profile.get("name") or "Candidate"
     explanation = (
-        f"Candidate achieved a {overall_score:.0f}/100 match for '{job_title}'. "
-        f"Technical alignment is evaluated at {tech_score:.0f}% with strong evidence in {', '.join(matched_req[:3]) if matched_req else 'core areas'}. "
-        f"Experience relevance scored {exp_score:.0f}% based on background history. "
+        f"{cand_display_name} achieved a {overall_score:.0f}/100 match for '{job_title}'. "
+        f"Technical alignment is evaluated at {tech_score:.0f}% with strong evidence in {', '.join(matched_req[:3]) if matched_req else 'core competencies'}. "
+        f"Experience relevance scored {exp_score:.0f}% based on {cand_exp_years:.1f} years of background history. "
+        f"Project relevance scored {project_score:.0f}%, and educational alignment scored {edu_score:.0f}%. "
         f"Recommendation: {rec}."
     )
 
@@ -183,6 +210,10 @@ def _heuristic_evaluate(job: Dict[str, Any], resume_text: str, profile: Dict[str
         "project_relevance": {
             "score": project_score,
             "assessment": f"Portfolio contains practical implementation evidence with {action_count} verified engineering actions and {metric_count} quantified deliverables."
+        },
+        "educational_relevance": {
+            "score": edu_score,
+            "assessment": edu_assessment
         },
         "strengths": strengths,
         "missing_or_weak_requirements": missing_items,
@@ -232,6 +263,12 @@ def evaluate_candidate_for_job(
                 raw_clean = raw_clean.split("```")[1].split("```")[0].strip()
 
             parsed = json.loads(raw_clean)
+            if "educational_relevance" not in parsed:
+                cand_edu = profile_dict.get("education") or []
+                parsed["educational_relevance"] = {
+                    "score": 85.0 if cand_edu else 70.0,
+                    "assessment": f"Educational background ({', '.join(cand_edu[:2]) if cand_edu else 'Verified qualifications'}) aligned with position expectations."
+                }
             overall = float(parsed.get("overall_score", 0.0))
             overall = round(max(0.0, min(100.0, overall)), 1)
             explanation = str(parsed.get("detailed_explanation", ""))

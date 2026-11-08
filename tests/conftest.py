@@ -13,7 +13,7 @@ SAMPLE = Path(__file__).resolve().parents[1] / "data" / "sample"
 @pytest.fixture
 def settings(tmp_path):
     s = Settings(data_dir=str(tmp_path / "rt"), database_url=f"sqlite:///{tmp_path / 't.db'}",
-                 agent_retry_backoff=0.0)
+                 agent_retry_backoff=0.0, llm_provider="demo")
     set_settings(s)
     return s
 

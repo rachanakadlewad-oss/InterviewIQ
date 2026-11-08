@@ -1,6 +1,6 @@
 """Reusable UI building blocks. Builders return HTML strings; `_emit` writes them with st.markdown.
 Everything user-supplied (candidate names, resume excerpts, answers) is HTML-escaped."""
-import html
+import html as py_html
 import re
 from typing import Iterable, List, Optional
 
@@ -13,7 +13,7 @@ class Raw(str):
 
 def esc(x) -> str:
     # '$' is escaped too: Streamlit markdown would otherwise try to render $...$ as math
-    return html.escape("" if x is None else str(x)).replace("$", "&#36;")
+    return py_html.escape("" if x is None else str(x)).replace("$", "&#36;")
 
 
 def _cell(v) -> str:
@@ -28,6 +28,10 @@ def _compact(s: str) -> str:
 def _emit(s: str):
     import streamlit as st
     st.markdown(_compact(s), unsafe_allow_html=True)
+
+
+def html(s: str):
+    _emit(s)
 
 
 # ------------------------------------------------------------------ builders (pure)

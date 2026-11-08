@@ -53,40 +53,39 @@ def render():
 
     # 1. Six Essential Metric Cards (Master Prompt Part 3)
     # - Total Jobs, Active Jobs, Total Applications, Shortlisted Candidates, Rejected Candidates, Pending Applications
-    st.markdown(
-        f'''<div class="iq-grid-6">
-            <div class="iq-metric">
-                <div class="l">Total Jobs</div>
-                <div class="v">{total_jobs}</div>
-                <div class="h">Configured roles</div>
-            </div>
-            <div class="iq-metric">
-                <div class="l">Active Jobs</div>
-                <div class="v">{m.get("active_jobs", 0)}</div>
-                <div class="h">Accepting applicants</div>
-            </div>
-            <div class="iq-metric">
-                <div class="l">Total Applications</div>
-                <div class="v">{m.get("total_applicants", 0)}</div>
-                <div class="h">Candidate submissions</div>
-            </div>
-            <div class="iq-metric tone-success">
-                <div class="l">Shortlisted</div>
-                <div class="v" style="color:var(--success);">{m.get("shortlisted", 0)}</div>
-                <div class="h">Interview eligible</div>
-            </div>
-            <div class="iq-metric {'tone-warning' if m.get('pending', 0) > 0 else ''}">
-                <div class="l">Pending Review</div>
-                <div class="v">{m.get("pending", 0)}</div>
-                <div class="h">Awaiting screening</div>
-            </div>
-            <div class="iq-metric {'tone-error' if m.get('rejected', 0) > 0 else ''}">
-                <div class="l">Rejected</div>
-                <div class="v">{m.get("rejected", 0)}</div>
-                <div class="h">Archived candidates</div>
-            </div>
-        </div>''',
-        unsafe_allow_html=True
+    C.html(
+        f'<div class="iq-grid-6">'
+        f'<div class="iq-metric">'
+        f'<div class="l">Total Jobs</div>'
+        f'<div class="v">{total_jobs}</div>'
+        f'<div class="h">Configured roles</div>'
+        f'</div>'
+        f'<div class="iq-metric">'
+        f'<div class="l">Active Jobs</div>'
+        f'<div class="v">{m.get("active_jobs", 0)}</div>'
+        f'<div class="h">Accepting applicants</div>'
+        f'</div>'
+        f'<div class="iq-metric">'
+        f'<div class="l">Total Applications</div>'
+        f'<div class="v">{m.get("total_applicants", 0)}</div>'
+        f'<div class="h">Candidate submissions</div>'
+        f'</div>'
+        f'<div class="iq-metric tone-success">'
+        f'<div class="l">Shortlisted</div>'
+        f'<div class="v" style="color:var(--success);">{m.get("shortlisted", 0)}</div>'
+        f'<div class="h">Interview eligible</div>'
+        f'</div>'
+        f'<div class="iq-metric {"tone-warning" if m.get("pending", 0) > 0 else ""}">'
+        f'<div class="l">Pending Review</div>'
+        f'<div class="v">{m.get("pending", 0)}</div>'
+        f'<div class="h">Awaiting screening</div>'
+        f'</div>'
+        f'<div class="iq-metric {"tone-error" if m.get("rejected", 0) > 0 else ""}">'
+        f'<div class="l">Rejected</div>'
+        f'<div class="v">{m.get("rejected", 0)}</div>'
+        f'<div class="h">Archived candidates</div>'
+        f'</div>'
+        f'</div>'
     )
 
     # 2. Visualizations: Application Status Distribution & Hiring Funnel

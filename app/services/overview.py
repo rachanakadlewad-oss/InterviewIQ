@@ -30,9 +30,9 @@ def build_overview(jobs: list, apps: list, booked_slots: int, free_slots: int, o
     st = lambda *names: sum(1 for a in apps if a["status"] in names)
     
     active_jobs_count = sum(1 for j in jobs if getattr(j, "status", "ACTIVE") == "ACTIVE")
-    total_shortlisted = sum(1 for a in apps if a["shortlisted"] or a["status"] == "SHORTLISTED")
-    total_rejected = sum(1 for a in apps if a["status"] == "REJECTED")
-    total_pending = sum(1 for a in apps if a["status"] in ("APPLIED", "PARSED", "SCORED", "UNDER_REVIEW", "PENDING") and not a["shortlisted"])
+    total_shortlisted = sum(1 for a in apps if (a.get("shortlisted") or a.get("status") == "SHORTLISTED") and a.get("status") != "REJECTED")
+    total_rejected = sum(1 for a in apps if a.get("status") == "REJECTED")
+    total_pending = sum(1 for a in apps if a.get("status") in ("APPLIED", "PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING") and not a.get("shortlisted") and a.get("status") != "REJECTED")
 
     m = {
         "total_jobs": len(jobs),
@@ -41,10 +41,10 @@ def build_overview(jobs: list, apps: list, booked_slots: int, free_slots: int, o
         "shortlisted": total_shortlisted,
         "rejected": total_rejected,
         "pending": total_pending,
-        "awaiting_screening": st("PARSED", "SCORING_FAILED", "APPLIED"),
+        "awaiting_screening": st("PARSED", "SCORING_FAILED", "APPLIED", "PENDING_REVIEW"),
         "scoring_failed": st("SCORING_FAILED"),
-        "awaiting_review": total_pending,
-        "awaiting_scheduling": sum(1 for a in apps if (a["shortlisted"] or a["status"] == "SHORTLISTED") and a["status"] != "SCHEDULED"),
+        "awaiting_review": sum(1 for a in apps if a.get("status") in ("SCORED", "UNDER_REVIEW") and not a.get("shortlisted")),
+        "awaiting_scheduling": sum(1 for a in apps if a.get("status") == "SHORTLISTED"),
         "scheduled": booked_slots,
         "free_slots": free_slots,
         "pending_identity": open_reviews,
@@ -65,10 +65,10 @@ def build_overview(jobs: list, apps: list, booked_slots: int, free_slots: int, o
 
     funnel = [
         {"stage": "Uploaded", "count": len(apps)},
-        {"stage": "Scored", "count": sum(1 for a in apps if RANK.get(a["status"], 0) >= 1)},
-        {"stage": "Shortlisted", "count": total_shortlisted},
-        {"stage": "Scheduled", "count": sum(1 for a in apps if RANK.get(a["status"], 0) >= 3)},
-        {"stage": "Interviewed", "count": sum(1 for a in apps if RANK.get(a["status"], 0) >= 6)},
+        {"stage": "Scored", "count": sum(1 for a in apps if RANK.get(a.get("status"), 0) >= 1)},
+        {"stage": "Shortlisted", "count": sum(1 for a in apps if RANK.get(a.get("status"), 0) >= 2 and a.get("status") != "REJECTED")},
+        {"stage": "Scheduled", "count": sum(1 for a in apps if RANK.get(a.get("status"), 0) >= 3 and a.get("status") != "REJECTED")},
+        {"stage": "Interviewed", "count": sum(1 for a in apps if RANK.get(a.get("status"), 0) >= 6 and a.get("status") != "REJECTED")},
         {"stage": "Decided", "count": m["decided"]},
     ]
 
@@ -81,7 +81,7 @@ def build_overview(jobs: list, apps: list, booked_slots: int, free_slots: int, o
         actions.append({"key": "create_job", "count": 0, "label": "Create your first job opening to begin", "page": "Jobs", "tone": "info"})
     if jobs and not apps:
         actions.append({"key": "upload", "count": 0, "label": "Add or invite candidates to start screening", "page": "Candidates", "tone": "info"})
-    add("identity", m["pending_identity"], f"{m['pending_identity']} identity review(s) are blocking interviews", "Interviews", "error")
+    add("identity", m["pending_identity"], f"{m['pending_identity']} identity review(s) are blocking interviews", "Identity Review", "error")
     add("failed_assessment", m["assessment_failed"], f"{m['assessment_failed']} assessment(s) failed and can be retried", "Reports", "error")
     add("screen", m["awaiting_screening"], f"{m['awaiting_screening']} resume(s) are waiting for AI screening", "Candidates", "warning")
     add("shortlist", m["awaiting_review"], f"{m['awaiting_review']} candidate(s) are pending review", "Candidates", "warning")
@@ -94,6 +94,7 @@ def build_overview(jobs: list, apps: list, booked_slots: int, free_slots: int, o
         "metrics": m,
         "funnel": funnel,
         "status_distribution": status_distribution,
+        "actions": actions,
         "pending_actions": actions,
         "next_action": actions[0] if actions else None
     }

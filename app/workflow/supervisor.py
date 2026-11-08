@@ -96,7 +96,7 @@ class Supervisor:
     def _n_load(self, st):
         q = select(Application).where(Application.job_id == st["job_id"])
         apps = self.db.execute(q).scalars().all()
-        todo = [a.id for a in apps if a.status in ("PARSED", "SCORING_FAILED") or
+        todo = [a.id for a in apps if a.status in ("PARSED", "PENDING_REVIEW", "SCORING_FAILED") or
                 (st.get("rescore") and a.status in ("SCORED", "SHORTLISTED") and a.resume_text)]
         return {"app_ids": todo, "result": {"scored": [], "failed": []}}
 
@@ -143,12 +143,12 @@ class Supervisor:
                 except Exception as eval_err:
                     log.warning("Semantic evaluator in supervisor encountered: %s", eval_err)
 
-                if a.status in ("PARSED", "SCORING_FAILED", "APPLIED"):
+                if a.status in ("PARSED", "PENDING_REVIEW", "SCORING_FAILED", "APPLIED"):
                     transition(a, "SCORED")
                 res["scored"].append(aid)
             except AgentError as e:
                 a.scoring_error = str(e)
-                if a.status == "PARSED":
+                if a.status in ("PARSED", "PENDING_REVIEW"):
                     transition(a, "SCORING_FAILED")
                 res["failed"].append({"application_id": aid, "error": str(e)})
                 log.error("scoring failed for application %s: %s", aid, e)
