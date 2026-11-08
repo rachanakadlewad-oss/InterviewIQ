@@ -53,6 +53,7 @@ class Settings:
     planned_competencies: int = 4
     min_competencies_covered: int = 3
     min_questions_before_conclude: int = 4
+    min_interview_coverage: float = 0.75
 
     identity_backend: str = "demo"
     identity_match_threshold: float = 0.70
@@ -112,6 +113,7 @@ class Settings:
             planned_competencies=_i("PLANNED_COMPETENCIES", 4),
             min_competencies_covered=_i("MIN_COMPETENCIES_COVERED", 3),
             min_questions_before_conclude=_i("MIN_QUESTIONS_BEFORE_CONCLUDE", 4),
+            min_interview_coverage=_f("MIN_INTERVIEW_COVERAGE", 0.75),
             identity_backend=os.getenv("IDENTITY_BACKEND", "demo").strip().lower(),
             identity_match_threshold=_f("IDENTITY_MATCH_THRESHOLD", 0.70),
             data_dir=str(data_path),
@@ -137,6 +139,8 @@ class Settings:
             raise ValueError("IDENTITY_BACKEND must be demo or opencv_basic")
         if self.max_questions < 2:
             raise ValueError("MAX_QUESTIONS must be >= 2")
+        if not (0.0 <= self.min_interview_coverage <= 1.0):
+            raise ValueError("MIN_INTERVIEW_COVERAGE must be between 0.0 and 1.0")
 
     # ---- derived paths ----
     @property
