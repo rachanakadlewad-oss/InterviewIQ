@@ -94,7 +94,13 @@ def jobs_directory_view():
                 )
 
             with col_actions:
-                a1, a2 = st.columns(2)
+                a_apps, a1, a2 = st.columns([1.5, 1.2, 1.0])
+                with a_apps:
+                    if st.button(f"👥 Applicants ({applicants_count})", key=f"btn_job_apps_{jid}", type="primary", use_container_width=True):
+                        st.session_state["cand_job_filter_select"] = jid
+                        st.session_state["job_id"] = jid
+                        api.go("Candidates")
+                        st.rerun()
                 with a1:
                     toggle_btn_label = "Deactivate" if is_active else "Activate"
                     if st.button(toggle_btn_label, key=f"tog_{jid}", use_container_width=True):

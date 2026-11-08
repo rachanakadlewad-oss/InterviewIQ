@@ -75,7 +75,7 @@ class Application(Base):
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     candidate_name: Mapped[str] = mapped_column(String(200), default="")
     email: Mapped[str] = mapped_column(String(200), default="")
-    status: Mapped[str] = mapped_column(String(40), default="PARSED")
+    status: Mapped[str] = mapped_column(String(40), default="PENDING_REVIEW")
     resume_filename: Mapped[str] = mapped_column(String(300), default="")
     resume_text: Mapped[str] = mapped_column(Text, default="")
     profile_json: Mapped[str] = mapped_column(Text, default="{}")

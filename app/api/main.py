@@ -432,35 +432,62 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     ):
         user_id = current_user.id if current_user else 1
         recruiter_job_ids = [j.id for j in db.execute(select(Job).where((Job.recruiter_id == user_id) | (Job.recruiter_id.is_(None)))).scalars()]
+        if not recruiter_job_ids:
+            recruiter_job_ids = [j.id for j in db.execute(select(Job)).scalars()]
         titles = {j.id: j.title for j in db.execute(select(Job)).scalars()}
         companies = {j.id: getattr(j, "company", "TechCorp") or "TechCorp" for j in db.execute(select(Job)).scalars()}
 
         q = select(Application)
-        if recruiter_job_ids:
-            q = q.where(Application.job_id.in_(recruiter_job_ids))
         if job_id:
             q = q.where(Application.job_id == job_id)
-        if status:
-            st_up = status.upper().strip()
-            if st_up in ("ACTIVE", "ACTIVE_ONLY"):
-                q = q.where(Application.status != "REJECTED")
-            elif st_up == "SHORTLISTED":
-                q = q.where((Application.shortlisted == True) | (Application.status == "SHORTLISTED")).where(Application.status != "REJECTED")
-            elif st_up == "REJECTED":
-                q = q.where(Application.status == "REJECTED")
-            elif st_up in ("PENDING", "PENDING_REVIEW", "UNDER_REVIEW"):
-                q = q.where(Application.status.in_(["PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED"]))
-            elif st_up in ("ACCEPTED", "DECIDED"):
-                q = q.where(Application.status.in_(["ACCEPTED", "DECIDED"])).where(Application.status != "REJECTED")
-            elif st_up == "SCHEDULED":
-                q = q.where(Application.status == "SCHEDULED")
-            elif st_up in ("ALL", "ALL_CANDIDATES"):
+        elif recruiter_job_ids:
+            q = q.where(Application.job_id.in_(recruiter_job_ids))
+
+        if status and status.strip():
+            raw = status.strip().upper().replace("-", "_").replace("/", " ")
+            tokens = set(raw.split())
+            if "ALL" in tokens or "ANY" in tokens:
+                st_norm = "ALL"
+            elif any(w in tokens for w in ("REJECTED", "REJECT", "ARCHIVED", "ARCHIVE", "CLOSED")):
+                st_norm = "REJECTED"
+            elif any(w in tokens for w in ("SHORTLISTED", "SHORTLIST")):
+                st_norm = "SHORTLISTED"
+            elif any(w in tokens for w in ("PENDING", "PARSED", "SCORED", "APPLIED", "SCREENING")):
+                st_norm = "PENDING_REVIEW"
+            elif any(w in tokens for w in ("ACTIVE", "UNDER_REVIEW")) or ("UNDER" in tokens and "REVIEW" in tokens):
+                st_norm = "ACTIVE"
+            elif any(w in tokens for w in ("ACCEPTED", "ACCEPT", "DECIDED")):
+                st_norm = "ACCEPTED"
+            elif any(w in tokens for w in ("SCHEDULED", "SCHEDULE")):
+                st_norm = "SCHEDULED"
+            else:
+                st_norm = raw.replace(" ", "_")
+
+            if st_norm in ("ACTIVE", "ACTIVE_ONLY"):
+                q = q.where(Application.status.not_in(["REJECTED", "REJECTED_AT_REVIEW"]))
+            elif st_norm == "SHORTLISTED":
+                q = q.where(((Application.shortlisted == True) | (Application.status == "SHORTLISTED")) & Application.status.not_in(["REJECTED", "REJECTED_AT_REVIEW"]))
+            elif st_norm == "REJECTED":
+                q = q.where(Application.status.in_(["REJECTED", "REJECTED_AT_REVIEW"]))
+            elif st_norm in ("PENDING", "PENDING_REVIEW", "UNDER_REVIEW"):
+                q = q.where(
+                    Application.status.in_(["PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED"])
+                ).where(
+                    Application.status.not_in(["REJECTED", "REJECTED_AT_REVIEW"])
+                ).where(
+                    Application.shortlisted != True
+                )
+            elif st_norm in ("ACCEPTED", "DECIDED"):
+                q = q.where(Application.status.in_(["ACCEPTED", "DECIDED"])).where(Application.status.not_in(["REJECTED", "REJECTED_AT_REVIEW"]))
+            elif st_norm == "SCHEDULED":
+                q = q.where(Application.status.in_(["SCHEDULED", "IDENTITY_PASSED", "INTERVIEW_IN_PROGRESS"])).where(Application.status.not_in(["REJECTED", "REJECTED_AT_REVIEW"]))
+            elif st_norm in ("ALL", "ALL_CANDIDATES"):
                 pass  # include all
             else:
-                q = q.where(Application.status == st_up)
+                q = q.where(Application.status == st_norm)
         else:
             # Default to active candidates (exclude REJECTED from the main active listing)
-            q = q.where(Application.status != "REJECTED")
+            q = q.where(Application.status.not_in(["REJECTED", "REJECTED_AT_REVIEW"]))
 
         apps = db.execute(q.order_by(Application.id.desc())).scalars().all()
         results = []
@@ -520,19 +547,21 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     ):
         user_id = current_user.id if current_user else 1
         recruiter_job_ids = [j.id for j in db.execute(select(Job).where((Job.recruiter_id == user_id) | (Job.recruiter_id.is_(None)))).scalars()]
+        if not recruiter_job_ids:
+            recruiter_job_ids = [j.id for j in db.execute(select(Job)).scalars()]
 
         q = select(Application)
-        if recruiter_job_ids:
-            q = q.where(Application.job_id.in_(recruiter_job_ids))
         if job_id:
             q = q.where(Application.job_id == job_id)
+        elif recruiter_job_ids:
+            q = q.where(Application.job_id.in_(recruiter_job_ids))
 
         apps = db.execute(q).scalars().all()
         total = len(apps)
-        rejected = sum(1 for a in apps if a.status == "REJECTED")
-        shortlisted = sum(1 for a in apps if (a.shortlisted or a.status == "SHORTLISTED") and a.status != "REJECTED")
-        accepted = sum(1 for a in apps if a.status in ("ACCEPTED", "DECIDED") and a.status != "REJECTED")
-        pending = sum(1 for a in apps if a.status in ("PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED") and not a.shortlisted and a.status != "REJECTED")
+        rejected = sum(1 for a in apps if a.status in ("REJECTED", "REJECTED_AT_REVIEW"))
+        shortlisted = sum(1 for a in apps if (a.shortlisted or a.status == "SHORTLISTED") and a.status not in ("REJECTED", "REJECTED_AT_REVIEW"))
+        accepted = sum(1 for a in apps if a.status in ("ACCEPTED", "DECIDED") and a.status not in ("REJECTED", "REJECTED_AT_REVIEW"))
+        pending = sum(1 for a in apps if a.status in ("PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED") and not a.shortlisted and a.status not in ("REJECTED", "REJECTED_AT_REVIEW"))
         active = total - rejected
 
         return {
@@ -667,6 +696,8 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
     def list_jobs(current_user: Optional[User] = Depends(recruiter), db=Depends(get_db)):
         user_id = current_user.id if current_user else 1
         jobs = db.execute(select(Job).where((Job.recruiter_id == user_id) | (Job.recruiter_id.is_(None))).order_by(Job.id)).scalars().all()
+        if not jobs:
+            jobs = db.execute(select(Job).order_by(Job.id)).scalars().all()
         results = []
         for j in jobs:
             apps = db.execute(select(Application).where(Application.job_id == j.id)).scalars().all()
@@ -683,7 +714,9 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
                 "status": getattr(j, "status", "ACTIVE") or "ACTIVE",
                 "competencies": len(jload(j.competencies_json, [])),
                 "applicants": len(apps),
-                "shortlisted": sum(1 for a in apps if a.shortlisted or a.status == "SHORTLISTED"),
+                "shortlisted": sum(1 for a in apps if (a.shortlisted or a.status == "SHORTLISTED") and a.status not in ("REJECTED", "REJECTED_AT_REVIEW")),
+                "rejected": sum(1 for a in apps if a.status in ("REJECTED", "REJECTED_AT_REVIEW")),
+                "pending": sum(1 for a in apps if a.status in ("PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED") and not a.shortlisted and a.status not in ("REJECTED", "REJECTED_AT_REVIEW")),
                 "created_at": j.created_at.isoformat() if getattr(j, "created_at", None) else None,
             })
         return results
@@ -707,7 +740,9 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             "status": getattr(j, "status", "ACTIVE") or "ACTIVE",
             "competencies": jload(j.competencies_json, []),
             "applicants": len(apps),
-            "shortlisted": sum(1 for a in apps if a.shortlisted or a.status == "SHORTLISTED")
+            "shortlisted": sum(1 for a in apps if (a.shortlisted or a.status == "SHORTLISTED") and a.status not in ("REJECTED", "REJECTED_AT_REVIEW")),
+            "rejected": sum(1 for a in apps if a.status in ("REJECTED", "REJECTED_AT_REVIEW")),
+            "pending": sum(1 for a in apps if a.status in ("PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING", "APPLIED") and not a.shortlisted and a.status not in ("REJECTED", "REJECTED_AT_REVIEW"))
         }
 
     class JobUpdateIn(BaseModel):
@@ -839,6 +874,13 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
                     func.lower(Application.candidate_name) == profile.name.strip().lower()
                 )
             ).scalars().first()
+        if not existing_app and file.filename and file.filename.strip():
+            existing_app = db.execute(
+                select(Application).where(
+                    Application.job_id == job_id,
+                    Application.resume_filename == file.filename.strip()
+                )
+            ).scalars().first()
 
         if existing_app:
             a = existing_app
@@ -897,6 +939,7 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
         a.ai_reasoning = jdump(eval_dict)
         a.resume_score = ai_score_val
         a.scoring_source = source
+        a.status = "PENDING_REVIEW"
 
         db.commit()
         return {"application_id": a.id, "name": a.candidate_name, "email": a.email, "has_reference_photo": bool(a.photo_path),
@@ -1192,37 +1235,42 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
         email = (current_user.email if current_user else profile.email) or ""
         name = (current_user.name if current_user else profile.name) or "Applicant"
 
-        # Duplicate check
+        # Duplicate check: prevent duplicate application by user_id, email, or candidate name
         existing = None
         if user_id:
             existing = db.execute(select(Application).where(Application.job_id == job_id, Application.user_id == user_id)).scalar_one_or_none()
-        elif email:
-            existing = db.execute(select(Application).where(Application.job_id == job_id, func.lower(Application.email) == email.lower())).scalar_one_or_none()
+        if not existing and email:
+            existing = db.execute(select(Application).where(Application.job_id == job_id, func.lower(Application.email) == email.lower().strip())).scalar_one_or_none()
+        if not existing and name:
+            existing = db.execute(select(Application).where(Application.job_id == job_id, func.lower(Application.candidate_name) == name.lower().strip())).scalar_one_or_none()
 
         if existing:
-            return {
-                "application_id": existing.id,
-                "job_id": job_id,
-                "job_title": job.title,
-                "status": existing.status,
-                "shortlisted": bool(existing.shortlisted),
-                "access_token": existing.access_token,
-                "message": "You have already applied for this job."
-            }
-
-        a = Application(
-            job_id=job_id,
-            user_id=user_id,
-            candidate_name=name,
-            email=email,
-            status="APPLIED",
-            resume_filename=file.filename or "resume",
-            resume_text=text_resume,
-            profile_json=jdump(profile.model_dump()),
-            access_token=new_access_token()
-        )
-        db.add(a)
-        db.flush()
+            a = existing
+            a.resume_filename = file.filename or a.resume_filename
+            a.resume_text = text_resume
+            a.profile_json = jdump(profile.model_dump())
+            if name and name != "Applicant":
+                a.candidate_name = name
+            if email:
+                a.email = email
+            if user_id and not a.user_id:
+                a.user_id = user_id
+            if a.status in ("PARSED", "SCORING_FAILED"):
+                a.status = "PENDING_REVIEW"
+        else:
+            a = Application(
+                job_id=job_id,
+                user_id=user_id,
+                candidate_name=name,
+                email=email,
+                status="PENDING_REVIEW",
+                resume_filename=file.filename or "resume",
+                resume_text=text_resume,
+                profile_json=jdump(profile.model_dump()),
+                access_token=new_access_token()
+            )
+            db.add(a)
+            db.flush()
 
         photo_bytes = (await photo.read()) if photo else embedded_photo
         if photo_bytes:

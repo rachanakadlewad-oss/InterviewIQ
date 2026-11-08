@@ -26,7 +26,7 @@ RECRUITER_PAGES = {
 RECRUITER_LABELS = {
     "Dashboard": "📊  Dashboard",
     "Jobs": "💼  Jobs",
-    "Candidates": "👥  Candidates",
+    "Candidates": "👥  Applicants",
     "Interviews": "🎙️  Interviews",
     "Reports": "📑  Reports",
 }

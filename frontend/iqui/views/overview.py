@@ -180,6 +180,11 @@ def render():
                 ("shortlisted", "Shortlisted?"),
                 ("applied_date", "Applied", "r")
             ], app_rows)
+            st.markdown("<div style='height:0.3rem;'></div>", unsafe_allow_html=True)
+            if st.button("👥 View All Candidates & Applications", key="dash_view_all_cands", use_container_width=True):
+                st.session_state["cand_job_filter_select"] = None
+                api.go("Candidates")
+                st.rerun()
         else:
             C.empty_state("No Applications Yet", "Upload resumes in the Candidates page or share job openings.")
 
@@ -205,5 +210,14 @@ def render():
                 ("shortlisted", "Shortlisted", "r"),
                 ("completed", "Interviews", "r"),
             ], job_rows)
+            st.markdown("<div style='height:0.3rem;'></div>", unsafe_allow_html=True)
+            c_pj_cols = st.columns(min(len(per_job), 3))
+            for idx, pj in enumerate(per_job[:3]):
+                with c_pj_cols[idx]:
+                    if st.button(f"👥 View {pj.get('applicants', 0)} Applicants (#{pj['job_id']})", key=f"dash_pj_btn_{pj['job_id']}", use_container_width=True):
+                        st.session_state["cand_job_filter_select"] = pj["job_id"]
+                        st.session_state["job_id"] = pj["job_id"]
+                        api.go("Candidates")
+                        st.rerun()
         else:
             C.empty_state("No Job Positions", "Create a new opening in the Jobs tab.")

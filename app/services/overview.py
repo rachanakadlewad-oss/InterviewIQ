@@ -102,8 +102,11 @@ def build_overview(jobs: list, apps: list, booked_slots: int, free_slots: int, o
 
 def compute_overview(db, user_id=None, now=None) -> dict:
     now = now or datetime.now()
-    if user_id:
-        jobs = db.execute(select(Job).where((Job.recruiter_id == user_id) | (Job.recruiter_id.is_(None)))).scalars().all()
+    actual_user_id = getattr(user_id, "id", user_id) if user_id is not None else None
+    if actual_user_id:
+        jobs = db.execute(select(Job).where((Job.recruiter_id == actual_user_id) | (Job.recruiter_id.is_(None)))).scalars().all()
+        if not jobs:
+            jobs = db.execute(select(Job)).scalars().all()
     else:
         jobs = db.execute(select(Job)).scalars().all()
 
@@ -122,7 +125,7 @@ def compute_overview(db, user_id=None, now=None) -> dict:
         "candidate_name": a.candidate_name,
         "email": a.email,
         "status": a.status,
-        "shortlisted": bool(a.shortlisted),
+        "shortlisted": bool(a.shortlisted and a.status not in ("REJECTED", "REJECTED_AT_REVIEW")),
         "ai_score": a.ai_score if a.ai_score is not None else a.resume_score,
         "resume_score": a.resume_score,
         "created_at": a.created_at
@@ -149,8 +152,9 @@ def compute_overview(db, user_id=None, now=None) -> dict:
             "employment_type": getattr(j, "employment_type", "Full-time") or "Full-time",
             "applicants": len(ja),
             "scored": sum(1 for a in ja if RANK.get(a["status"], 0) >= 1),
-            "shortlisted": sum(1 for a in ja if a["shortlisted"] or a["status"] == "SHORTLISTED"),
-            "rejected": sum(1 for a in ja if a["status"] == "REJECTED"),
+            "shortlisted": sum(1 for a in ja if (a.get("shortlisted") or a.get("status") == "SHORTLISTED") and a.get("status") not in ("REJECTED", "REJECTED_AT_REVIEW")),
+            "rejected": sum(1 for a in ja if a.get("status") in ("REJECTED", "REJECTED_AT_REVIEW")),
+            "pending": sum(1 for a in ja if a.get("status") in ("APPLIED", "PARSED", "PENDING_REVIEW", "SCORED", "UNDER_REVIEW", "PENDING") and not a.get("shortlisted") and a.get("status") not in ("REJECTED", "REJECTED_AT_REVIEW")),
             "completed": sum(1 for a in ja if a["status"] in COMPLETED),
             "created_date": j.created_at.strftime("%b %d, %Y") if getattr(j, "created_at", None) else "-"
         })

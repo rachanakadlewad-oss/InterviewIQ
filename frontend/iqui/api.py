@@ -146,10 +146,12 @@ def config():
 # ---- candidate & recruiter endpoints ----------------------------------------
 def get_recruiter_candidates(job_id: Optional[int] = None, status: Optional[str] = None, search: Optional[str] = None):
     params = []
-    if job_id:
+    if job_id is not None:
         params.append(f"job_id={job_id}")
-    if status and status != "All":
-        params.append(f"status={status}")
+    if status and str(status).upper() not in ("ALL", "ALL (INCLUDING REJECTED)"):
+        params.append(f"status={requests.utils.quote(str(status))}")
+    elif status and str(status).upper() in ("ALL", "ALL (INCLUDING REJECTED)"):
+        params.append("status=ALL")
     if search:
         params.append(f"search={requests.utils.quote(search)}")
     qs = ("?" + "&".join(params)) if params else ""
@@ -168,7 +170,9 @@ def update_candidate_status(application_id: int, action: str, notes: Optional[st
     if ok:
         act_label = {
             "SHORTLIST": "Shortlisted",
+            "UNSHORTLIST": "Moved to Review Queue",
             "REJECT": "Rejected",
+            "RESTORE": "Restored to Review Queue",
             "PENDING": "Moved to Review Queue",
             "PENDING_REVIEW": "Moved to Review Queue",
             "ACCEPT": "Accepted"
@@ -187,6 +191,8 @@ def rescore_candidate(application_id: int):
 PAGE_MAP = {
     "Overview": "Dashboard",
     "Shortlist & Scheduling": "Candidates",
+    "Applicants": "Candidates",
+    "Candidates": "Candidates",
     "Identity Review": "Interviews",
     "Reports & Decisions": "Reports",
 }
