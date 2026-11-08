@@ -10,12 +10,19 @@ import jwt
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 MIN_PASSWORD_LENGTH = 8
 
+# Common trivially compromised passwords from public breaches
+COMMON_BREACHED_PASSWORDS = {
+    "password", "password1", "12345678", "123456789", "1234567890",
+    "admin123", "admin1234", "welcome1", "welcome123", "letmein123",
+    "qwerty1234", "iloveyou123"
+}
+
 
 def hash_password(password: str) -> str:
-    """Securely hash a password using bcrypt."""
+    """Securely hash a password using bcrypt with 12 salt rounds."""
     if not password:
         raise ValueError("Password cannot be empty")
-    salt = bcrypt.gensalt()
+    salt = bcrypt.gensalt(rounds=12)
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
@@ -37,11 +44,17 @@ def is_valid_email(email: str) -> bool:
 
 
 def validate_password_strength(password: str) -> Optional[str]:
-    """Validate password strength rules."""
+    """Validate password strength rules: length, character variety, and common breached passwords."""
     if not password:
         return "Password is required."
     if len(password) < MIN_PASSWORD_LENGTH:
         return f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
+    if password.lower() in COMMON_BREACHED_PASSWORDS:
+        return "This password is too common or known to be compromised in public data breaches. Please choose a stronger, unique password."
+    has_letter = any(c.isalpha() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    if not (has_letter and has_digit):
+        return "Password must contain both letters and numbers for enhanced security."
     return None
 
 

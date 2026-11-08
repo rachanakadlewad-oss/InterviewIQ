@@ -105,11 +105,34 @@ def render(page):
 
     info = me()
     if not info:
-        if token():
-            st.session_state.pop("cand_token", None)
-            C.callout("error", "Your session is no longer valid", "Please sign in again.")
-        sign_in()
-        return
+        cand_user = api.get_current_user()
+        if api.is_authenticated() and cand_user and cand_user.get("role") == "candidate":
+            apps = api.call("GET", "/portal/applications", quiet=True) or []
+            if apps:
+                st.session_state["cand_token"] = apps[0]["access_token"]
+                info = me()
+
+        if not info:
+            if api.is_authenticated() and cand_user and cand_user.get("role") == "candidate":
+                C.page_header(
+                    "Candidate Workspace",
+                    f"Welcome, {C.esc(cand_user.get('name', 'Candidate'))}!",
+                    "Candidate Portal"
+                )
+                C.callout(
+                    "info",
+                    "No Active Applications Found",
+                    "You haven't submitted an application for any open positions yet. Browse open positions below to apply and attend an autonomous AI interview."
+                )
+                explore_jobs()
+                return
+
+            if token():
+                st.session_state.pop("cand_token", None)
+                C.callout("error", "Your session is no longer valid", "Please sign in again.")
+            sign_in()
+            return
+
     if info.get("access_token") and not st.session_state.get("cand_token"):
         st.session_state["cand_token"] = info["access_token"]
     {"Explore Jobs": lambda _: explore_jobs(), "My Application": my_application, "Interview Details": interview_details, "Identity Verification": identity,

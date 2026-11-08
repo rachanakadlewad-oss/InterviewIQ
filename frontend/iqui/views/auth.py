@@ -474,6 +474,29 @@ def render():
                     "</div>",
                     unsafe_allow_html=True
                 )
+                with st.expander("🔑 Forgot or need to update your password?"):
+                    st.caption("Enter your email address and choose a strong, unique password (letters and numbers, at least 8 characters).")
+                    reset_email = st.text_input("Account Email", placeholder="user@company.com", key=f"reset_email_{selected_role}")
+                    reset_pw = st.text_input("New Strong Password", type="password", placeholder="Minimum 8 characters (letters + numbers)", key=f"reset_pw_{selected_role}")
+                    reset_cpw = st.text_input("Confirm New Password", type="password", placeholder="Confirm new password", key=f"reset_cpw_{selected_role}")
+                    if st.button("🔒 Update / Reset Password", key=f"btn_reset_{selected_role}", type="secondary", use_container_width=True):
+                        if not reset_email.strip():
+                            C.callout("error", "Error", "Please enter your email address.")
+                        elif not reset_pw:
+                            C.callout("error", "Error", "Please enter your new password.")
+                        elif reset_pw != reset_cpw:
+                            C.callout("error", "Error", "Passwords do not match.")
+                        else:
+                            with st.spinner("Updating password securely with bcrypt..."):
+                                ok, r = api.request("POST", "/auth/reset-password", json={
+                                    "email": reset_email.strip().lower(),
+                                    "new_password": reset_pw,
+                                    "confirm_new_password": reset_cpw
+                                })
+                            if ok:
+                                C.callout("success", "Password Reset", r.get("message", "Password has been updated. You can now log in."))
+                            else:
+                                C.callout("error", "Reset Failed", r)
             else:
                 st.markdown(
                     "<div style='text-align: center; font-size: 0.85rem; color: #94A3B8; margin-top: 0.5rem;'>"

@@ -69,6 +69,30 @@ def render_top_corner_profile(user: dict, role: str):
                 unsafe_allow_html=True
             )
             st.divider()
+            with st.expander("🔒 Change Password"):
+                old_pw = st.text_input("Current Password", type="password", key="_prof_old_pw")
+                new_pw = st.text_input("New Password", type="password", key="_prof_new_pw", help="At least 8 characters, letters and numbers")
+                cnew_pw = st.text_input("Confirm New Password", type="password", key="_prof_cnew_pw")
+                if st.button("Update Password", type="primary", use_container_width=True, key="_prof_update_pw_btn"):
+                    if not old_pw or not new_pw:
+                        st.error("Please fill out all password fields.")
+                    elif new_pw != cnew_pw:
+                        st.error("New passwords do not match.")
+                    else:
+                        ok, r = api.request("POST", "/auth/change-password", json={
+                            "current_password": old_pw,
+                            "new_password": new_pw,
+                            "confirm_new_password": cnew_pw
+                        })
+                        if ok:
+                            if isinstance(r, dict) and "token" in r:
+                                st.session_state["auth_token"] = r["token"]
+                                st.query_params["session"] = r["token"]
+                            st.toast("Password updated successfully!", icon="🔒")
+                            st.success("Password changed successfully!")
+                        else:
+                            st.error(str(r))
+            st.divider()
             if st.button("🚪  Log Out", key="popover_logout_action", use_container_width=True):
                 api.logout()
                 st.rerun()

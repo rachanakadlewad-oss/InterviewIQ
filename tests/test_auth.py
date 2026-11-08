@@ -385,3 +385,128 @@ def test_candidate_application_linking_and_token_compatibility(app_and_client):
     )
     assert hijack_res.status_code == 403
     assert "does not belong" in hijack_res.text
+
+
+# ==============================================================================
+# 5. Password Security, Change Password, and Reset Password Tests
+# ==============================================================================
+def test_breached_and_weak_passwords_rejected():
+    # Common breached passwords rejected
+    assert auth_svc.validate_password_strength("12345678") is not None
+    assert auth_svc.validate_password_strength("password") is not None
+    assert auth_svc.validate_password_strength("admin123") is not None
+    assert auth_svc.validate_password_strength("admin1234") is not None
+
+    # Missing digits or letters rejected
+    assert auth_svc.validate_password_strength("alllettersonly") is not None
+    assert auth_svc.validate_password_strength("1234567890") is not None
+
+    # Short password rejected
+    assert auth_svc.validate_password_strength("short1") is not None
+
+    # Strong passwords accepted
+    assert auth_svc.validate_password_strength("StrongPass99!") is None
+    assert auth_svc.validate_password_strength("ValidPassw0rd") is None
+
+
+def test_password_change_flow(app_and_client):
+    _, client, _ = app_and_client
+
+    # 1. Register recruiter
+    res = client.post("/auth/signup", json={
+        "name": "Grace Hopper",
+        "email": "grace@navy.mil",
+        "password": "InitialPass123!",
+        "confirm_password": "InitialPass123!",
+        "role": "recruiter"
+    })
+    assert res.status_code == 200
+    token = res.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 2. Change password: wrong old password -> 401
+    bad_old = client.post("/auth/change-password", headers=headers, json={
+        "current_password": "WrongPassword123!",
+        "new_password": "NewSecurePass123!",
+        "confirm_new_password": "NewSecurePass123!"
+    })
+    assert bad_old.status_code == 401
+
+    # 3. Change password: same as old password -> 422
+    same_pw = client.post("/auth/change-password", headers=headers, json={
+        "current_password": "InitialPass123!",
+        "new_password": "InitialPass123!",
+        "confirm_new_password": "InitialPass123!"
+    })
+    assert same_pw.status_code == 422
+
+    # 4. Change password: weak/breached new password -> 422
+    weak_pw = client.post("/auth/change-password", headers=headers, json={
+        "current_password": "InitialPass123!",
+        "new_password": "admin123",
+        "confirm_new_password": "admin123"
+    })
+    assert weak_pw.status_code == 422
+
+    # 5. Change password: successful update -> 200
+    change_ok = client.post("/auth/change-password", headers=headers, json={
+        "current_password": "InitialPass123!",
+        "new_password": "NewStrongPass456!",
+        "confirm_new_password": "NewStrongPass456!"
+    })
+    assert change_ok.status_code == 200
+    assert "token" in change_ok.json()
+
+    # 6. Old password must no longer work for login
+    old_login = client.post("/auth/login", json={
+        "email": "grace@navy.mil",
+        "password": "InitialPass123!",
+        "role": "recruiter"
+    })
+    assert old_login.status_code == 401
+
+    # 7. New password logs in successfully
+    new_login = client.post("/auth/login", json={
+        "email": "grace@navy.mil",
+        "password": "NewStrongPass456!",
+        "role": "recruiter"
+    })
+    assert new_login.status_code == 200
+    assert new_login.json()["user"]["email"] == "grace@navy.mil"
+
+
+def test_password_reset_flow(app_and_client):
+    _, client, _ = app_and_client
+
+    # 1. Register candidate
+    client.post("/auth/signup", json={
+        "name": "Alan Turing",
+        "email": "alan@enigma.org",
+        "password": "OriginalPass123!",
+        "confirm_password": "OriginalPass123!",
+        "role": "candidate"
+    })
+
+    # 2. Reset password
+    reset_res = client.post("/auth/reset-password", json={
+        "email": "alan@enigma.org",
+        "new_password": "ResetStrongPass789!",
+        "confirm_new_password": "ResetStrongPass789!"
+    })
+    assert reset_res.status_code == 200
+
+    # 3. Old password fails
+    fail_login = client.post("/auth/login", json={
+        "email": "alan@enigma.org",
+        "password": "OriginalPass123!",
+        "role": "candidate"
+    })
+    assert fail_login.status_code == 401
+
+    # 4. Newly reset password succeeds
+    ok_login = client.post("/auth/login", json={
+        "email": "alan@enigma.org",
+        "password": "ResetStrongPass789!",
+        "role": "candidate"
+    })
+    assert ok_login.status_code == 200

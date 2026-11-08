@@ -15,7 +15,7 @@ from app import db as dbm
 from app.config import Settings, get_settings, set_settings
 from app.db import Application, CandidateProfile, IdentityCheckRow, Job, ReviewItem, Slot, User, UserSession, jdump, jload
 from app.logging_setup import setup_logging
-from app.schemas import AuthResponse, JobIn, LoginIn, LogoutResponse, SessionState, SignupIn, UserOut
+from app.schemas import AuthResponse, ChangePasswordIn, JobIn, LoginIn, LogoutResponse, ResetPasswordIn, SessionState, SignupIn, UserOut
 from app.services import auth as auth_svc
 from app.services import identity as idsvc
 from app.services import overview as overview_svc
@@ -297,6 +297,80 @@ def create_app(settings: Optional[Settings] = None, llm=None, identity_backend=N
             except Exception:
                 pass
         return LogoutResponse(status="ok", message="Successfully logged out")
+
+    @app.post("/auth/change-password")
+    def auth_change_password(
+        body: ChangePasswordIn,
+        user: User = Depends(get_current_user_optional),
+        db=Depends(get_db)
+    ):
+        if not user:
+            raise HTTPException(401, "Authentication required. Please sign in.")
+        if not auth_svc.verify_password(body.current_password, user.password_hash):
+            raise HTTPException(401, "Current password is incorrect.")
+        if body.new_password != body.confirm_new_password:
+            raise HTTPException(422, "New password and confirmation do not match.")
+        if body.new_password == body.current_password:
+            raise HTTPException(422, "New password must be different from current password.")
+        pw_err = auth_svc.validate_password_strength(body.new_password)
+        if pw_err:
+            raise HTTPException(422, pw_err)
+
+        user.password_hash = auth_svc.hash_password(body.new_password)
+        db.execute(
+            update(UserSession).where(UserSession.user_id == user.id).values(revoked=True)
+        )
+        token_str, session_id, expires_at = auth_svc.create_access_token(
+            user_id=user.id,
+            email=user.email,
+            role=user.role,
+            name=user.name,
+            secret_key=s.jwt_secret_key,
+            expires_hours=s.jwt_expiration_hours,
+            algorithm=s.jwt_algorithm
+        )
+        db_sess = UserSession(
+            id=session_id,
+            user_id=user.id,
+            role=user.role,
+            expires_at=expires_at,
+            revoked=False
+        )
+        db.add(db_sess)
+        db.commit()
+        return {
+            "status": "ok",
+            "message": "Password updated successfully.",
+            "token": token_str
+        }
+
+    @app.post("/auth/reset-password")
+    def auth_reset_password(
+        body: ResetPasswordIn,
+        db=Depends(get_db)
+    ):
+        email = body.email.strip().lower()
+        user = db.execute(select(User).where(func.lower(User.email) == email)).scalar_one_or_none()
+        if not user:
+            return {
+                "status": "ok",
+                "message": "If an account exists with this email, the password has been reset."
+            }
+        if body.new_password != body.confirm_new_password:
+            raise HTTPException(422, "New password and confirmation do not match.")
+        pw_err = auth_svc.validate_password_strength(body.new_password)
+        if pw_err:
+            raise HTTPException(422, pw_err)
+
+        user.password_hash = auth_svc.hash_password(body.new_password)
+        db.execute(
+            update(UserSession).where(UserSession.user_id == user.id).values(revoked=True)
+        )
+        db.commit()
+        return {
+            "status": "ok",
+            "message": "Password reset successfully. Please sign in with your new password."
+        }
 
     @app.get("/auth/me")
     def auth_me(user: User = Depends(get_current_user_optional)):
