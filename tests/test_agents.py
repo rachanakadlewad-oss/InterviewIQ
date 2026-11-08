@@ -198,3 +198,136 @@ def test_assessment_candidate_feedback_cannot_leak_scores(settings):
         AssessmentAgent(FakeLLM([assess_json(ev, summary="You scored 7/10 overall.")]), settings).assess(assess_ctx())
     ok = AssessmentAgent(FakeLLM([assess_json(ev)]), settings).assess(assess_ctx())
     assert ok.source == "llm"
+
+
+def test_demo_scoring_empty_and_dismissive_answers_score_zero():
+    from app.agents.demo_logic import _score_answers
+    comp = {
+        "id": "python",
+        "name": "Python Programming",
+        "description": "Writing idiomatic, clean Python backend services",
+        "keywords": ["python", "fastapi", "pytest", "asyncio"],
+        "rubric": {"1": "No experience", "3": "Basic scripts", "5": "Production services"}
+    }
+    # Empty answers
+    score_empty, wc_empty, hits_empty, _, _ = _score_answers([], comp)
+    assert score_empty == 0.0
+    assert hits_empty == []
+
+    score_spaces, _, _, _, _ = _score_answers(["   ", ""], comp)
+    assert score_spaces == 0.0
+
+    # Dismissive answers
+    score_dismissive, _, _, _, _ = _score_answers(["No, I don't know."], comp)
+    assert score_dismissive == 0.0
+
+
+def test_demo_scoring_irrelevant_answer_scores_zero():
+    from app.agents.demo_logic import _score_answers
+    comp = {
+        "id": "python",
+        "name": "Python Programming",
+        "description": "Writing idiomatic, clean Python backend services",
+        "keywords": ["python", "fastapi", "pytest", "asyncio"],
+        "rubric": {"1": "No experience", "3": "Basic scripts", "5": "Production services"}
+    }
+    ans = ["I enjoy baking sourdough bread and running half marathons outdoors on weekends."]
+    score, wc, hits, digits, verbs = _score_answers(ans, comp)
+    assert score == 0.0
+    assert hits == []
+
+
+def test_demo_scoring_vague_introductory_answer_scores_partial():
+    from app.agents.demo_logic import _score_answers
+    comp = {
+        "id": "python",
+        "name": "Python Programming",
+        "description": "Writing idiomatic, clean Python backend services",
+        "keywords": ["python", "fastapi", "pytest", "asyncio"],
+        "rubric": {"1": "No experience", "3": "Basic scripts", "5": "Production services"}
+    }
+    ans = ["I learned Python in a college project and wrote simple basic scripts for coursework."]
+    score, wc, hits, digits, verbs = _score_answers(ans, comp)
+    assert 2.5 <= score <= 4.5
+    assert "python" in hits
+
+
+def test_demo_scoring_relevant_without_metrics_scores_strong():
+    from app.agents.demo_logic import _score_answers
+    comp = {
+        "id": "python",
+        "name": "Python Programming",
+        "description": "Writing idiomatic, clean Python backend services",
+        "keywords": ["python", "fastapi", "pytest", "asyncio"],
+        "rubric": {"1": "No experience", "3": "Basic scripts", "5": "Production services with clean architecture"}
+    }
+    # Notice: exactly zero numbers/digits in this answer
+    ans = [
+        "I designed and implemented our REST backend service in FastAPI, "
+        "writing pytest tests and structuring the codebase into distinct service layers "
+        "to ensure clean separation of concerns."
+    ]
+    assert not any(ch.isdigit() for ch in ans[0])
+    score, wc, hits, digits, verbs = _score_answers(ans, comp)
+    assert score >= 7.0
+    assert digits == 0
+    assert verbs >= 2
+
+
+def test_demo_scoring_detailed_with_reasoning_and_metrics_scores_excellent():
+    from app.agents.demo_logic import _score_answers
+    comp = {
+        "id": "python",
+        "name": "Python Programming",
+        "description": "Writing idiomatic, clean Python backend services",
+        "keywords": ["python", "fastapi", "pytest", "asyncio"],
+        "rubric": {"1": "No experience", "3": "Basic scripts", "5": "Production services with high throughput"}
+    }
+    ans = [
+        "I re-architected our data pipeline in Python using asyncio because synchronous I/O "
+        "was blocking request threads under peak load. I profiled the system, migrated the queries, "
+        "and reduced latency by 45% across 10 microservices."
+    ]
+    score, wc, hits, digits, verbs = _score_answers(ans, comp)
+    assert score >= 8.5
+    assert digits >= 1
+    assert verbs >= 2
+
+
+def test_demo_assessment_end_to_end_agent_evidence_tiers(settings):
+    comp_py = {
+        "id": "python",
+        "name": "Python",
+        "weight": 1.0,
+        "keywords": ["python", "fastapi", "pytest"],
+        "rubric": {"1": "Vague", "3": "Working", "5": "Advanced architecture"},
+        "answers": ["I designed and built our FastAPI service, writing pytest tests to ensure reliability."]
+    }
+    comp_db = {
+        "id": "databases",
+        "name": "Databases",
+        "weight": 1.0,
+        "keywords": ["postgresql", "sql", "redis"],
+        "rubric": {"1": "Vague", "3": "Working", "5": "Optimized queries"},
+        "answers": ["I haven't used PostgreSQL or databases much; I only read about them briefly."]
+    }
+    ctx = {
+        "job_title": "Backend Engineer",
+        "resume_summary": {},
+        "trace_summary": {},
+        "competencies": [comp_py, comp_db]
+    }
+    res = AssessmentAgent(DemoLLM(), settings).assess(ctx)
+    assert res.source == "demo_rules"
+    scores = {c.competency_id: c.score for c in res.output.competencies}
+    # Python should be strong (>= 7.0)
+    assert scores["python"] >= 7.0
+    # Databases should be partial (<= 4.5)
+    assert scores["databases"] <= 4.5
+    # Python in strengths, Databases in weaknesses
+    assert any("Python" in s for s in res.output.strengths)
+    assert any("Databases" in w for w in res.output.weaknesses)
+    # Verbatim evidence check
+    for c in res.output.competencies:
+        if c.score > 2.0:
+            assert len(c.evidence) > 0

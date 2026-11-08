@@ -276,27 +276,139 @@ def demo_interviewer(ctx: dict) -> dict:
 
 
 # ------------------------------------------------------------------ assessment
-def _score_answers(answers: List[str], kws: List[str]):
-    text = " ".join(answers)
+REASONING_TERMS = re.compile(
+    r"\b(because|in order to|so that|so they could|so it cannot|trade-off|tradeoff|"
+    r"trade-offs|tradeoffs|trade off|chose|chosen|decided|decision|weighed|why we|the reason|"
+    r"rationale|prevent|instead of|approach|architecture|pattern|strategy|solution|"
+    r"resolved by|root cause|diagnosed|troubleshot|reproducing|investigation|investigated)\b",
+    re.I
+)
+
+VAGUE_TERMS = re.compile(
+    r"\b(a bit|somewhat|not much|basic knowledge|briefly|superficial|read about|heard of|just started|not really)\b",
+    re.I
+)
+
+DISMISSIVE_TERMS = re.compile(
+    r"^(no|nope|not really|don't know|dont know|not sure|never used|haven't used|havent used|no idea|n/a)\b",
+    re.I
+)
+
+
+def _score_answers(answers: List[str], comp: dict):
+    """Score interview answers against competency expectations using relevance, actions, and reasoning.
+
+    Tiers:
+    - Missing (0.0 - 1.5): Empty, dismissive, or irrelevant (no competency overlap)
+    - Partial (2.5 - 4.5): Vague, introductory/coursework, or passive tool mentions without concrete actions
+    - Strong (6.5 - 8.0): Competency relevance + concrete actions + technical explanation/reasoning (no metrics required)
+    - Excellent (8.5 - 10.0): Strong evidence + architectural trade-offs, multi-service scope, and/or verified metrics
+    """
+    text = " ".join(answers).strip()
     wc = word_count(text)
-    hits = set(h.lower() for h in _kw_hits(text, kws))
-    digits = len(re.findall(r"\b\d+(\.\d+)?\s*(%|x|ms|s|users|requests|people|juniors|engineers)?\b", text))
-    verbs = len(re.findall(ACTION_VERBS, text.lower()))
-    score = 3 + min(3.0, wc / 40) + min(3.0, len(hits) * 0.8) + min(1.5, digits * 0.5) + min(1.5, verbs * 0.5)
-    return round(min(10.0, score), 1), wc, sorted(hits), digits, verbs
+    if not text:
+        return 0.0, 0, [], 0, 0
+
+    if DISMISSIVE_TERMS.search(text) and wc < 15:
+        return 0.0, wc, [], 0, 0
+
+    name = comp.get("name", "")
+    desc = comp.get("description", "")
+    kws = list(comp.get("keywords") or [])
+    rubric = comp.get("rubric") or {}
+
+    # Build domain terms from keywords, name, description, and rubric descriptors
+    domain_terms = list(kws)
+    if name and name.lower() not in [k.lower() for k in domain_terms]:
+        domain_terms.append(name)
+    if desc:
+        domain_terms.extend([w for w in re.findall(r"\b[a-zA-Z]{4,}\b", desc) if w.lower() not in {"with", "that", "this", "from", "some", "such", "have"}])
+    for lvl in ("3", "5"):
+        r_text = rubric.get(lvl, "")
+        if r_text:
+            domain_terms.extend([w for w in re.findall(r"\b[a-zA-Z]{4,}\b", r_text) if w.lower() not in {"with", "that", "this", "from", "some", "such", "well", "give", "good"}])
+
+    hits = set(h.lower() for h in _kw_hits(text, domain_terms))
+
+    # If answers have zero relevance to the competency, score as Missing (0.0)
+    if not hits:
+        return 0.0, wc, [], 0, 0
+
+    # Extract evidence signals
+    actions = set(m.group(0).lower() for m in DEMO_ACTION_VERBS.finditer(text))
+    action_count = len(actions)
+    reasoning_hits = set(m.group(0).lower() for m in REASONING_TERMS.finditer(text))
+    has_reasoning = len(reasoning_hits) > 0
+    is_intro = bool(DEMO_INTRO_PASSIVE.search(text)) or bool(VAGUE_TERMS.search(text))
+    metrics = _extract_genuine_metrics(text)
+    has_metrics = len(metrics) > 0
+
+    # Distinguish evidence tiers:
+    if action_count == 0 or is_intro:
+        # Partial evidence: mentions tools/keywords but lacks concrete actions or is introductory/vague
+        if is_intro:
+            score = 2.5 + min(1.0, 0.3 * len(hits))
+            score = min(3.5, score)
+        else:
+            score = 3.5 + min(1.0, 0.3 * (len(hits) - 1))
+            score = min(4.5, score)
+    else:
+        # Direct evidence: has concrete actions and demonstrated relevance
+        base_score = 6.5
+        depth_bonus = min(1.0, 0.3 * min(action_count, 3) + 0.2 * min(len(hits), 3))
+        reasoning_bonus = 0.5 if has_reasoning else 0.0
+
+        # Metrics are optional: strong score is achieved without metrics
+        metric_bonus = min(1.5, 0.8 + 0.3 * len(metrics)) if has_metrics else 0.0
+
+        score = base_score + depth_bonus + reasoning_bonus + metric_bonus
+        # Cap excellent evidence realistically
+        score = min(9.5, max(6.5, score))
+
+    return round(score, 1), wc, sorted(hits), len(metrics), action_count
 
 
 def demo_assessment(ctx: dict) -> dict:
+    from app.textutil import contains_quote
     comps_out, strengths, weaknesses, improve = [], [], [], []
     for c in ctx["competencies"]:
         answers = c["answers"]
-        score, wc, hits, digits, verbs = _score_answers(answers, c.get("keywords", []))
+        score, wc, hits, digits, verbs = _score_answers(answers, c)
+
+        all_ans_text = " ".join(answers)
         sents = [s for a in answers for s in re.split(r"(?<=[.!?])\s+", a.strip()) if len(s) > 8]
-        sents.sort(key=lambda s: (-len(_kw_hits(s, c.get("keywords", []))), -len(re.findall(r"\d", s))))
-        evidence = [s[:240] for s in sents[:2]]
+        domain_kws = c.get("keywords", []) or [c.get("name", "")]
+        sents.sort(key=lambda s: (
+            -len(_kw_hits(s, domain_kws)),
+            -bool(DEMO_ACTION_VERBS.search(s)),
+            -len(s)
+        ))
+
+        # Verbatim evidence extraction satisfying semantic check
+        if score <= 2.0 and not hits:
+            evidence = []
+        else:
+            evidence = [s[:240] for s in sents if contains_quote(all_ans_text, s[:240])][:2]
+            if score > 2.0 and not evidence and sents:
+                evidence = [sents[0][:200]]
+
+        if score == 0.0:
+            evidence_desc = "missing evidence"
+        elif score <= 4.5:
+            evidence_desc = "partial evidence"
+        elif score >= 8.5:
+            evidence_desc = "excellent evidence"
+        else:
+            evidence_desc = "strong evidence"
+
+        rationale = (
+            f"[{evidence_desc.title()}] Evaluated across {len(answers)} answer(s); "
+            f"identified {len(hits)} relevant domain term(s), {verbs} concrete action(s), "
+            f"and {digits} verified metric(s) (demo heuristic)."
+        )
+
         comps_out.append({"competency_id": c["id"], "score": score, "evidence": evidence,
-                          "rationale": f"{wc} words across {len(answers)} answer(s); {len(hits)} relevant term(s) {hits[:4]}; "
-                                       f"{digits} quantified detail(s); {verbs} first-person action statement(s) (demo heuristic)."})
+                          "rationale": rationale})
         if score >= 7:
             strengths.append(f"{c['name']}: gave specific, evidence-backed examples.")
         elif score <= 4.5:
