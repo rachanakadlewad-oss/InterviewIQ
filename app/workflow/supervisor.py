@@ -450,6 +450,7 @@ class Supervisor:
                 continue
             c = cm.get(cid)
             comps.append({"id": cid, "name": eng.name_of(state, job, cid), "weight": c.weight if c else 1.0,
+                          "description": getattr(c, "description", "") if c else "",
                           "rubric": c.rubric if c else {"1": "Vague or no examples", "3": "Relevant example with some detail",
                                                         "5": "Specific, well-reasoned examples with outcomes"},
                           "keywords": c.keywords if c else [], "answers": answers[cid],
