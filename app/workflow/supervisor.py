@@ -457,9 +457,23 @@ class Supervisor:
                           "planned": cid in state.planned})
         rs = self._resume_scores(a)
         traces = self.traces(a.id)
-        ctx = {"job_title": job.title, "competencies": comps,
-               "resume_summary": {"resume_score_0_100": a.resume_score, "per_competency": rs},
-               "trace_summary": {"decisions": [t["decision"] for t in traces], "conclusion": state.conclusion_reason}}
+        assessed_planned = [cid for cid in state.planned if cid in answers]
+        coverage = scoring.interview_coverage(state.planned, assessed_planned)
+        min_cov = getattr(self.s, "min_interview_coverage", 0.75)
+        is_provisional = coverage < min_cov
+        ctx = {
+            "job_title": job.title,
+            "competencies": comps,
+            "planned_competencies": state.planned,
+            "assessed_planned_competencies": assessed_planned,
+            "coverage": coverage,
+            "min_coverage": min_cov,
+            "is_provisional": is_provisional,
+            "resume_summary": {"resume_score_0_100": a.resume_score, "per_competency": rs},
+            "trace_summary": {"decisions": [t["decision"] for t in traces], "conclusion": state.conclusion_reason},
+            "weights": {"resume": self.s.weight_resume, "interview": self.s.weight_interview},
+            "thresholds": {"advance_min": self.s.recommend_advance_min, "review_min": self.s.recommend_review_min},
+        }
         row = self.db.execute(select(AssessmentRow).where(AssessmentRow.application_id == a.id)).scalar_one_or_none() \
             or AssessmentRow(application_id=a.id)
         try:
@@ -479,7 +493,14 @@ class Supervisor:
         final = scoring.combine(r_total, i_total, self.s.weight_resume, self.s.weight_interview)
         flags = []
         missing = [name for cid in state.planned if cid not in iscores for name in [eng.name_of(state, job, cid)]]
-        if missing:
+        if is_provisional:
+            flags.append(
+                f"PROVISIONAL ASSESSMENT: Incomplete interview coverage ({int(coverage * 100)}% < {int(min_cov * 100)}% required). "
+                f"Assessed {len(assessed_planned)} of {len(state.planned)} planned competencies. "
+                f"Requires human recruiter review. Unassessed competencies: {missing}. "
+                f"Unassessed areas must not be treated as proof of poor candidate ability."
+            )
+        elif missing:
             flags.append(f"Planned competencies NOT assessed (no interview evidence): {missing}")
         if i_total is None:
             flags.append("No interview score available; final score equals resume score only.")
@@ -499,7 +520,7 @@ class Supervisor:
         row.output_json = out.model_dump_json()
         row.interview_scores_json = jdump(iscores)
         row.resume_score, row.interview_score, row.final_score = r_total, i_total, final
-        row.label = scoring.recommendation_label(final, self.s)
+        row.label = scoring.recommendation_label(final, self.s, coverage=coverage)
         row.weights_json = jdump({"resume": self.s.weight_resume, "interview": self.s.weight_interview})
         row.flags_json = jdump(flags)
         self.db.add(row)

@@ -3,8 +3,8 @@ import re
 from unittest.mock import MagicMock, patch
 import pytest
 
-from interviewiq.frontend.iqui.views import auth
-from interviewiq.frontend.iqui import components as C
+from frontend.iqui.views import auth
+from frontend.iqui import components as C
 
 
 def test_auth_html_compaction_and_rendering():
